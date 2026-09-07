@@ -1,0 +1,28 @@
+sip:
+  host: "voice.navaphone.com"
+  port: 5060
+  username: "989102802725"
+  transport: "udp"
+  expires: 3600
+  user_agent: "Nimfadora/0.1.0"
+
+media:
+  rtp_port_start: 20000
+  rtp_port_end: 30000
+  codec: "PCMU"
+  sample_rate: 8000
+
+tts:
+  voice: "fa-IR-DilaraNeural"
+  rate: "-20%"
+  volume: "+0%"
+
+brain:
+  base_url: "https://sadgpt.catroom.ir/v1"
+  model: "xiaomi/mimo-v2.5-pro"
+  max_tokens: 256
+  temperature: 0.7
+
+agent:
+  script: "scripts/default.lua"
+  log_level: "info"
