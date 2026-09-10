@@ -47,10 +47,7 @@ var (
 
 func loadDashboard() {
 	loadOnce.Do(func() {
-		data, err := os.ReadFile("api/dashboard.html")
-		if err != nil {
-			data, err = os.ReadFile("dashboard.html")
-		}
+		data, err := os.ReadFile("dashboard.html")
 		if err == nil {
 			dashboardHTML = data
 		}
