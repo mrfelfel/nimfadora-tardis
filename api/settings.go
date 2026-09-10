@@ -1,21 +1,16 @@
-// Package api provides the Vercel Serverless Go handler for the TARDIS Control Plane.
-// It serves the full dashboard UI and all API endpoints from a single serverless function.
 package api
 
 import (
-	_ "embed"
 	"encoding/json"
 	"net/http"
 	"os"
 	"sync"
-
-	"gopkg.in/yaml.v3"
 )
 
-//go:embed dashboard.html
-var dashboardHTML []byte
-
 var (
+	dashboardHTML []byte
+	loadOnce      sync.Once
+
 	settingsMu sync.RWMutex
 	settings   = map[string]any{
 		"brain": map[string]any{
@@ -50,18 +45,25 @@ var (
 	}
 )
 
-func init() {
-	loadFromDisk()
+func loadDashboard() {
+	loadOnce.Do(func() {
+		data, err := os.ReadFile("api/dashboard.html")
+		if err != nil {
+			data, err = os.ReadFile("dashboard.html")
+		}
+		if err == nil {
+			dashboardHTML = data
+		}
+	})
 }
 
-func loadFromDisk() {
-	path := "config.yaml"
-	data, err := os.ReadFile(path)
+func loadConfigFromDisk() {
+	data, err := os.ReadFile("config.json")
 	if err != nil {
 		return
 	}
 	var loaded map[string]any
-	if err := yaml.Unmarshal(data, &loaded); err == nil {
+	if json.Unmarshal(data, &loaded) == nil {
 		settingsMu.Lock()
 		for k, v := range loaded {
 			settings[k] = v
@@ -70,16 +72,15 @@ func loadFromDisk() {
 	}
 }
 
-func saveToDisk() error {
-	data, err := yaml.Marshal(settings)
+func saveConfigToDisk() error {
+	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile("config.yaml", data, 0644)
+	return os.WriteFile("config.json", data, 0644)
 }
 
 // Handler is the Vercel serverless entry point.
-// Every route under /api/* is routed here via vercel.json rewrites.
 func Handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, OPTIONS")
@@ -96,17 +97,26 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/settings" || path == "/api/settings/":
 		handleSettings(w, r)
 	case path == "/api/audit" || path == "/api/audit/":
-		handleAuditLogs(w, r)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]any{})
 	case path == "/api/tools" || path == "/api/tools/":
-		handleTools(w, r)
-	case path == "/" || path == "":
-		serveDashboard(w, r)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"tools": []map[string]string{
+			{"name": "coding_agent", "description": "Delegate programming tasks to OpenCode / Claude Code with a chosen model."},
+			{"name": "research_agent", "description": "Perform deep research across codebase and documentation."},
+			{"name": "telephony_make_call", "description": "Place an outbound SIP voice call to deliver a notification."},
+			{"name": "system_run_command", "description": "Execute a shell command on the machine."},
+		}, "count": 4})
+	case path == "/api/approvals" || path == "/api/approvals/":
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]any{})
 	default:
-		http.NotFound(w, r)
+		serveDashboard(w, r)
 	}
 }
 
 func serveDashboard(w http.ResponseWriter, r *http.Request) {
+	loadDashboard()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(dashboardHTML)
 }
@@ -114,6 +124,7 @@ func serveDashboard(w http.ResponseWriter, r *http.Request) {
 func handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		loadConfigFromDisk()
 		settingsMu.RLock()
 		data := settings
 		settingsMu.RUnlock()
@@ -130,9 +141,8 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 		for k, v := range incoming {
 			settings[k] = v
 		}
-		err := saveToDisk()
+		err := saveConfigToDisk()
 		settingsMu.Unlock()
-
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -140,25 +150,9 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Settings saved and applied"})
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Settings saved"})
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
-}
-
-func handleAuditLogs(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode([]any{})
-}
-
-func handleTools(w http.ResponseWriter, r *http.Request) {
-	tools := []map[string]any{
-		{"name": "coding_agent", "description": "Delegate programming tasks to OpenCode / Claude Code with a chosen model."},
-		{"name": "research_agent", "description": "Perform deep research across codebase and documentation."},
-		{"name": "telephony_make_call", "description": "Place an outbound SIP voice call to deliver a notification."},
-		{"name": "system_run_command", "description": "Execute a shell command on the machine."},
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"tools": tools, "count": len(tools)})
 }

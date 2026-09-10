@@ -5,7 +5,10 @@
   "builds": [
     {
       "src": "api/settings.go",
-      "use": "@vercel/go"
+      "use": "@vercel/go",
+      "config": {
+        "includeFiles": ["api/dashboard.html"]
+      }
     }
   ],
   "rewrites": [
@@ -18,8 +21,7 @@
       "source": "/(.*)",
       "headers": [
         { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "X-XSS-Protection", "value": "1; mode=block" }
+        { "key": "X-Frame-Options", "value": "DENY" }
       ]
     }
   ]
