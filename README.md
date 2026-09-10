@@ -3,6 +3,7 @@
 **Autonomous AI Agent & Enterprise MCP Gateway / Control Plane**
 
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/mrfelfel/nimfadora-tardis)
+[![Deploy on Vercel](https://img.shields.io/badge/Deploy%20on%20Vercel-black?logo=vercel)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fmrfelfel%2Fnimfadora-tardis)
 [![Protocol](https://img.shields.io/badge/MCP-2026--07--28-purple)](https://modelcontextprotocol.io)
 
 Nimfadora TARDIS is an autonomous orchestrator and Model Context Protocol (MCP) Gateway built with Go. It serves as both a multi-agent decision engine and a unified control plane for AI agents (Claude Code, OpenCode, Cursor, and custom clients).
@@ -110,12 +111,17 @@ server {
 }
 ```
 
-### Vercel (Static Dashboard Only)
+### Vercel (Static Dashboard)
 
-The `public/` directory contains a static copy of the dashboard UI.
-Vercel can serve it, but the full agent/mcp functionality requires the Go binary.
+One-click deploy:
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fmrfelfel%2Fnimfadora-tardis)
+
+The `public/` directory contains the static dashboard UI. Vercel serves it on the edge CDN.
+Note: the full agent/MCP functionality requires the Go binary running locally or on a server.
 
 ```bash
+# Or deploy via CLI
 vercel --prod
 ```
 
