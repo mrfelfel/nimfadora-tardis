@@ -7,21 +7,33 @@ import (
 )
 
 type Config struct {
-	SIP   SIPConfig   `yaml:"sip"`
-	Media MediaConfig `yaml:"media"`
-	TTS   TTSConfig   `yaml:"tts"`
-	Brain BrainConfig `yaml:"brain"`
-	Agent AgentConfig `yaml:"agent"`
+	SIP     SIPConfig     `yaml:"sip"`
+	Media   MediaConfig   `yaml:"media"`
+	TTS     TTSConfig     `yaml:"tts"`
+	Brain   BrainConfig   `yaml:"brain"`
+	Agent   AgentConfig   `yaml:"agent"`
+	Gateway GatewayConfig `yaml:"gateway"`
+}
+
+type GatewayConfig struct {
+	Addr            string          `yaml:"addr"`
+	AllowDangerous  bool            `yaml:"allow_dangerous"`
+	RequireApproval []string        `yaml:"require_approval"`
+	AllowedTools    []string        `yaml:"allowed_tools"`
+	DeniedTools     []string        `yaml:"denied_tools"`
+	CodingBackend   string          `yaml:"coding_backend"` // "opencode", "claude", "builtin"
+	CodingModel     string          `yaml:"coding_model"`   // e.g. "glm-4", "claude-3-5-sonnet", etc.
 }
 
 type SIPConfig struct {
-	Host      string `yaml:"host"`
-	Port      int    `yaml:"port"`
-	Username  string `yaml:"username"`
-	Password  string `yaml:"-"`
-	Transport string `yaml:"transport"`
-	Expires   int    `yaml:"expires"`
-	UserAgent string `yaml:"user_agent"`
+	Host       string `yaml:"host"`
+	Port       int    `yaml:"port"`
+	Username   string `yaml:"username"`
+	FromNumber string `yaml:"from_number"`
+	Password   string `yaml:"-"`
+	Transport  string `yaml:"transport"`
+	Expires    int    `yaml:"expires"`
+	UserAgent  string `yaml:"user_agent"`
 }
 
 type MediaConfig struct {
@@ -38,11 +50,11 @@ type TTSConfig struct {
 }
 
 type BrainConfig struct {
-	APIKey       string  `yaml:"-"`
-	BaseURL      string  `yaml:"base_url"`
-	Model        string  `yaml:"model"`
-	MaxTokens    int     `yaml:"max_tokens"`
-	Temperature  float64 `yaml:"temperature"`
+	APIKey      string  `yaml:"-"`
+	BaseURL     string  `yaml:"base_url"`
+	Model       string  `yaml:"model"`
+	MaxTokens   int     `yaml:"max_tokens"`
+	Temperature float64 `yaml:"temperature"`
 }
 
 type AgentConfig struct {
@@ -69,6 +81,24 @@ func Load(path string) (*Config, error) {
 	}
 	if dom := os.Getenv("SIP_DOMAIN"); dom != "" {
 		cfg.SIP.Host = dom
+	}
+
+	if cfg.Gateway.Addr == "" {
+		cfg.Gateway.Addr = ":8080"
+	}
+	if cfg.Gateway.CodingBackend == "" {
+		cfg.Gateway.CodingBackend = "opencode"
+	}
+	if cfg.Gateway.CodingModel == "" {
+		cfg.Gateway.CodingModel = "glm-4"
+	}
+	if len(cfg.Gateway.RequireApproval) == 0 {
+		cfg.Gateway.RequireApproval = []string{
+			"telephony_make_call",
+			"system_run_dangerous_command",
+			"git_force_push",
+			"db_drop_table",
+		}
 	}
 
 	return cfg, nil

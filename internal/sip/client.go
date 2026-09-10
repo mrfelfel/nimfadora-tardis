@@ -1,448 +1,409 @@
 package sip
 
 import (
+	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
 	"github.com/icholy/digest"
 	"github.com/nimfadora/tardis/internal/config"
 )
 
 type Client struct {
-	cfg            config.SIPConfig
-	conn           *net.UDPConn
-	serverIP       string
-	localIP        string
-	callID         string
-	cseq           int
-	fromTag        string
-	username       string
-	realm          string
-	nonce          string
-	pendingRTPPort int
-	sync.RWMutex
+	cfg      config.SIPConfig
+	ua       *sipgo.UserAgent
+	client   *sipgo.Client
+	server   *sipgo.Server
+	dialogCC *sipgo.DialogClientCache
+	dialog   *sipgo.DialogClientSession
+	localIP  string
+	rtpPort  int
+	byeCh    chan struct{}
+	byeOnce  sync.Once
 }
 
 type Response struct {
 	StatusCode int
 	Reason     string
-	Headers    map[string]string
 	Body       string
 }
 
 func NewClient(cfg config.SIPConfig, transport string) (*Client, error) {
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("resolve SIP server: %w", err)
-	}
-
-	conn, err := net.DialUDP("udp", nil, udpAddr)
-	if err != nil {
-		return nil, fmt.Errorf("dial SIP server: %w", err)
-	}
-
 	localIP := getLocalIPMust()
 
-	return &Client{
+	ua, err := sipgo.NewUA(
+		sipgo.WithUserAgent("Nimfadora/0.3.0"),
+		sipgo.WithUserAgentHostname(localIP),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sipgo UA: %w", err)
+	}
+
+	cli, err := sipgo.NewClient(ua,
+		sipgo.WithClientHostname(localIP),
+		sipgo.WithClientPort(cfg.Port),
+	)
+	if err != nil {
+		ua.Close()
+		return nil, fmt.Errorf("sipgo client: %w", err)
+	}
+
+	srv, err := sipgo.NewServer(ua)
+	if err != nil {
+		ua.Close()
+		return nil, fmt.Errorf("sipgo server: %w", err)
+	}
+
+	contactHDR := sip.ContactHeader{
+		Address: sip.Uri{User: cfg.Username, Host: localIP, Port: cfg.Port},
+	}
+	dialogCC := sipgo.NewDialogClientCache(cli, contactHDR)
+
+	c := &Client{
 		cfg:      cfg,
-		conn:     conn,
-		serverIP: udpAddr.IP.String(),
+		ua:       ua,
+		client:   cli,
+		server:   srv,
+		dialogCC: dialogCC,
 		localIP:  localIP,
-		callID:   fmt.Sprintf("%d@nimfadora", time.Now().UnixNano()),
-		cseq:     1,
-		fromTag:  generateTag(),
-		username: cfg.Username,
-	}, nil
+		byeCh:    make(chan struct{}, 1),
+	}
+
+	// Handle incoming BYE
+	srv.OnBye(func(req *sip.Request, tx sip.ServerTransaction) {
+		reasonStr := "none"
+		if rHdr := req.GetHeader("Reason"); rHdr != nil {
+			reasonStr = rHdr.Value()
+		}
+		log.Printf("[sipgo] ← BYE received! Reason: %s", reasonStr)
+		tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil))
+		c.byeOnce.Do(func() { close(c.byeCh) })
+	})
+
+	// Handle incoming re-INVITE — auto-respond 200 OK with SDP
+	srv.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
+		log.Println("[sipgo] ← re-INVITE from server")
+		sdp := fmt.Sprintf("v=0\r\no=- 0 0 IN IP4 %s\r\ns=Nimfadora\r\nc=IN IP4 %s\r\nt=0 0\r\nm=audio %d RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=ptime:20\r\na=sendrecv\r\n",
+			c.localIP, c.localIP, c.rtpPort)
+		res := sip.NewResponseFromRequest(req, 200, "OK", nil)
+		res.SetBody([]byte(sdp))
+		res.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+		res.AppendHeader(sip.NewHeader("Session-Expires", "1800;refresher=uas"))
+		tx.Respond(res)
+		log.Println("[sipgo] → 200 OK to re-INVITE")
+	})
+
+	// Handle UPDATE — auto-respond 200 OK
+	srv.OnUpdate(func(req *sip.Request, tx sip.ServerTransaction) {
+		log.Println("[sipgo] ← UPDATE (session refresh)")
+		tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil))
+	})
+
+	// Handle OPTIONS — auto-respond 200 OK
+	srv.OnOptions(func(req *sip.Request, tx sip.ServerTransaction) {
+		tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil))
+	})
+
+	return c, nil
 }
 
+func (c *Client) ByeCh() <-chan struct{} { return c.byeCh }
 func (c *Client) Close() error {
-	return c.conn.Close()
-}
-
-func (c *Client) sendAndRead(msg string) (*Response, error) {
-	_, err := c.conn.Write([]byte(msg))
-	if err != nil {
-		return nil, err
+	if c.server != nil {
+		c.server.Close()
 	}
-	return c.readResponse()
-}
-
-func (c *Client) readResponse() (*Response, error) {
-	buf := make([]byte, 65535)
-	c.conn.SetReadDeadline(time.Now().Add(120 * time.Second))
-	n, err := c.conn.Read(buf)
-	if err != nil {
-		return nil, fmt.Errorf("read SIP: %w", err)
-	}
-	raw := string(buf[:n])
-	log.Printf("[sip] raw %d bytes:\n%s", n, raw[:min(500, len(raw))])
-	return parseResponse(raw), nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return c.ua.Close()
 }
 
 func (c *Client) Register() error {
-	uri := fmt.Sprintf("sip:%s", c.cfg.Host)
-	fromTag := c.fromTag
+	recipient := sip.Uri{Host: c.cfg.Host, Port: c.cfg.Port}
+	req := sip.NewRequest(sip.REGISTER, recipient)
+	fromAddr := sip.Uri{User: c.cfg.Username, Host: c.cfg.Host}
+	fromTag := sip.GenerateTagN(16)
+	fromParams := sip.NewParams()
+	fromParams.Add("tag", fromTag)
+	req.AppendHeader(&sip.FromHeader{Address: fromAddr, Params: fromParams})
+	req.AppendHeader(&sip.ToHeader{Address: sip.Uri{User: c.cfg.Username, Host: c.cfg.Host}})
+	cid := sip.CallIDHeader(sip.GenerateTagN(20))
+	req.AppendHeader(&cid)
+	req.AppendHeader(&sip.CSeqHeader{SeqNo: 1, MethodName: sip.REGISTER})
+	req.AppendHeader(&sip.ContactHeader{Address: sip.Uri{User: c.cfg.Username, Host: c.localIP, Port: c.cfg.Port}})
+	req.AppendHeader(sip.NewHeader("Expires", "3600"))
+	req.AppendHeader(sip.NewHeader("User-Agent", "Nimfadora/0.3.0"))
 
-	msg := fmt.Sprintf("REGISTER %s SIP/2.0\r\n"+
-		"Via: SIP/2.0/UDP %s:%d;rport;branch=z9hG4bK%d\r\n"+
-		"Max-Forwards: 70\r\n"+
-		"From: <sip:%s@%s>;tag=%s\r\n"+
-		"To: <sip:%s@%s>\r\n"+
-		"Call-ID: %s\r\n"+
-		"CSeq: %d REGISTER\r\n"+
-		"Contact: <sip:%s@%s:%d>;expires=3600;rinstance=%s\r\n"+
-		"Expires: 3600\r\n"+
-		"User-Agent: %s\r\n"+
-		"Content-Length: 0\r\n"+
-		"\r\n",
-		uri,
-		c.localIP, c.cfg.Port, rand.Int63(),
-		c.username, c.cfg.Host, fromTag,
-		c.username, c.cfg.Host,
-		c.callID,
-		c.cseq,
-		c.username, c.localIP, c.cfg.Port,
-		c.cfg.UserAgent,
-	)
-	c.cseq++
+	ctx := context.Background()
+	go c.server.ListenAndServe(ctx, "udp", fmt.Sprintf("%s:%d", c.localIP, c.cfg.Port))
 
-	resp, err := c.sendAndRead(msg)
+	tx, err := c.client.TransactionRequest(ctx, req)
 	if err != nil {
-		return fmt.Errorf("REGISTER: %w", err)
+		return err
 	}
+	resp := <-tx.Responses()
+	log.Printf("[sipgo] REGISTER → %d %s", resp.StatusCode, resp.Reason)
 
 	if resp.StatusCode == 401 {
-		log.Println("[sip] 401, trying digest auth...")
-		resp, err = c.sendAuthRequest("REGISTER", uri, resp)
+		log.Println("[sipgo] REGISTER 401, digest auth...")
+		cred, err := c.computeAuth("REGISTER", fmt.Sprintf("sip:%s", c.cfg.Host), resp)
 		if err != nil {
-			return fmt.Errorf("REGISTER auth: %w", err)
+			return fmt.Errorf("compute REGISTER auth: %w", err)
 		}
-	}
 
+		req2 := sip.NewRequest(sip.REGISTER, recipient)
+		fromParams2 := sip.NewParams()
+		fromParams2.Add("tag", fromTag)
+		req2.AppendHeader(&sip.FromHeader{Address: fromAddr, Params: fromParams2})
+		req2.AppendHeader(&sip.ToHeader{Address: sip.Uri{User: c.cfg.Username, Host: c.cfg.Host}})
+		req2.AppendHeader(&cid)
+		req2.AppendHeader(&sip.CSeqHeader{SeqNo: 2, MethodName: sip.REGISTER})
+		req2.AppendHeader(&sip.ContactHeader{Address: sip.Uri{User: c.cfg.Username, Host: c.localIP, Port: c.cfg.Port}})
+		req2.AppendHeader(sip.NewHeader("Expires", "3600"))
+		req2.AppendHeader(sip.NewHeader("Authorization", cred))
+		req2.AppendHeader(sip.NewHeader("User-Agent", "Nimfadora/0.3.0"))
+
+		tx2, err := c.client.TransactionRequest(ctx, req2)
+		if err != nil {
+			return err
+		}
+		resp = <-tx2.Responses()
+		log.Printf("[sipgo] REGISTER → %d %s", resp.StatusCode, resp.Reason)
+	}
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("REGISTER failed: %d %s", resp.StatusCode, resp.Reason)
+		return fmt.Errorf("REGISTER failed: %d", resp.StatusCode)
 	}
-
-	log.Println("[sip] registered")
+	log.Println("[sipgo] registered successfully")
 	return nil
 }
 
 func (c *Client) Invite(targetNumber string, rtpPort int, fromNumber string) (*Response, error) {
-	c.pendingRTPPort = rtpPort
-	uri := fmt.Sprintf("sip:%s@%s", targetNumber, c.cfg.Host)
+	c.rtpPort = rtpPort
+	recipient := sip.Uri{User: targetNumber, Host: c.cfg.Host}
+	sdp := []byte(fmt.Sprintf("v=0\r\no=- 0 0 IN IP4 %s\r\ns=Nimfadora\r\nc=IN IP4 %s\r\nt=0 0\r\nm=audio %d RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=ptime:20\r\na=sendrecv\r\n",
+		c.localIP, c.localIP, rtpPort))
 
-	sdp := GenerateSDP(c.localIP, rtpPort)
+	inviteReq := sip.NewRequest(sip.INVITE, recipient)
+	inviteReq.SetBody(sdp)
+	inviteReq.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+	inviteReq.AppendHeader(sip.NewHeader("User-Agent", "Nimfadora/0.3.0"))
 
-	cseq := c.cseq
-	c.cseq++
+	// Navaphone OpenSIPS requires From username to match registered auth username
+	fromUsername := c.cfg.Username
+	fromTag := sip.GenerateTagN(16)
+	fromParams := sip.NewParams()
+	fromParams.Add("tag", fromTag)
+	inviteReq.AppendHeader(&sip.FromHeader{
+		Address: sip.Uri{User: fromUsername, Host: c.cfg.Host, Scheme: "sip"},
+		Params:  fromParams,
+	})
+	inviteReq.AppendHeader(&sip.ToHeader{
+		Address: sip.Uri{User: targetNumber, Host: c.cfg.Host, Scheme: "sip"},
+	})
+	cid := sip.CallIDHeader(sip.GenerateTagN(20))
+	inviteReq.AppendHeader(&cid)
+	inviteReq.AppendHeader(&sip.CSeqHeader{SeqNo: 1, MethodName: sip.INVITE})
+	inviteReq.AppendHeader(&sip.ContactHeader{
+		Address: sip.Uri{User: fromUsername, Host: c.localIP, Port: c.cfg.Port, Scheme: "sip"},
+	})
 
-	msg := fmt.Sprintf("INVITE %s SIP/2.0\r\n"+
-		"Via: SIP/2.0/UDP %s:%d;rport;branch=z9hG4bK%d\r\n"+
-		"Max-Forwards: 70\r\n"+
-		"From: <sip:%s@%s>;tag=%s\r\n"+
-		"To: <sip:%s@%s>\r\n"+
-		"Call-ID: %s\r\n"+
-		"CSeq: %d INVITE\r\n"+
-		"Contact: <sip:%s@%s:%d>\r\n"+
-		"Content-Type: application/sdp\r\n"+
-		"User-Agent: %s\r\n"+
-		"Content-Length: %d\r\n"+
-		"\r\n"+
-		"%s",
-		uri,
-		c.localIP, c.cfg.Port, rand.Int63(),
-		fromNumber, c.cfg.Host, c.fromTag,
-		targetNumber, c.cfg.Host,
-		c.callID,
-		cseq,
-		c.username, c.localIP, c.cfg.Port,
-		c.cfg.UserAgent,
-		len(sdp),
-		sdp,
-	)
-
-	resp, err := c.sendAndRead(msg)
+	ctx := context.Background()
+	tx, err := c.client.TransactionRequest(ctx, inviteReq, sipgo.ClientRequestAddVia)
 	if err != nil {
-		return nil, fmt.Errorf("INVITE: %w", err)
+		return nil, fmt.Errorf("transaction: %w", err)
 	}
 
-	log.Printf("[sip] INVITE response: %d %s", resp.StatusCode, resp.Reason)
+	authRetries := 0
+	lastReq := inviteReq
+	var earlySDP string
+	log.Println("[sipgo] waiting for answer...")
+	for {
+		select {
+		case r := <-tx.Responses():
+			log.Printf("[sipgo] INVITE → %d %s", r.StatusCode, r.Reason)
+			if r.IsSuccess() {
+				// Send standard RFC 3261 ACK directly for 200 OK
+				ack := c.buildACK(lastReq, r)
+				if err := c.client.WriteRequest(ack); err != nil {
+					log.Printf("[sipgo] warning: ACK write failed: %v", err)
+				} else {
+					log.Printf("[sipgo] → ACK sent for 200 OK to %s", ack.Destination())
+				}
 
-	// Wait for provisional responses and handle auth (60s for ringing)
-	for resp.StatusCode < 200 || resp.StatusCode == 401 || resp.StatusCode == 407 {
-		log.Printf("[sip] response: %d %s", resp.StatusCode, resp.Reason)
+				// If server retransmits 200 OK (e.g. packet loss or delay), re-send ACK
+				tx.OnRetransmission(func(res *sip.Response) {
+					if res.IsSuccess() {
+						log.Println("[sipgo] ← 200 OK retransmitted by server, re-sending ACK")
+						c.client.WriteRequest(ack)
+					}
+				})
 
-		// Handle auth challenges
-		if resp.StatusCode == 401 || resp.StatusCode == 407 {
-			log.Printf("[sip] %d auth challenge, retrying...", resp.StatusCode)
-			c.sendACK(uri, cseq, "")
-			resp, err = c.sendAuthRequest("INVITE", uri, resp)
-			if err != nil {
-				return nil, fmt.Errorf("INVITE auth: %w", err)
+				var remoteSDP string
+				if len(r.Body()) > 0 {
+					remoteSDP = string(r.Body())
+				} else if earlySDP != "" {
+					remoteSDP = earlySDP
+				}
+				return &Response{StatusCode: 200, Reason: "OK", Body: remoteSDP}, nil
 			}
-			continue
-		}
+			if r.IsProvisional() {
+				if r.StatusCode == 183 && len(r.Body()) > 0 && earlySDP == "" {
+					earlySDP = string(r.Body())
+					log.Printf("[sipgo] captured early SDP from 183 (%d bytes)", len(earlySDP))
+				}
+				continue
+			}
+			// Handle 407 Proxy Auth Required or 401 Unauthorized
+			if r.StatusCode == 407 || r.StatusCode == 401 {
+				authRetries++
+				if authRetries > 3 {
+					return nil, fmt.Errorf("INVITE auth failed after %d retries", authRetries)
+				}
+				log.Println("[sipgo] INVITE challenge received, calculating digest auth...")
+				tx.Terminate()
 
-		if resp.StatusCode >= 200 {
-			// Extract To tag from response
-			toTag := extractTag(resp.Headers["To"])
-			c.sendACK(uri, cseq, toTag)
-			log.Printf("[sip] ACK sent for %d (toTag=%s)", resp.StatusCode, toTag)
-			break
-		}
+				authURI := inviteReq.Recipient.String()
+				cred, err := c.computeAuth("INVITE", authURI, r)
+				if err != nil {
+					return nil, fmt.Errorf("compute INVITE auth: %w", err)
+				}
 
-		// Provisional - read next response
-		resp, err = c.readResponse()
-		if err != nil {
-			return nil, fmt.Errorf("wait for answer: %w", err)
+				authReq := sip.NewRequest(sip.INVITE, recipient)
+				authReq.SetBody(sdp)
+				authReq.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+				authReq.AppendHeader(sip.NewHeader("User-Agent", "Nimfadora/0.3.0"))
+
+				authFromParams := sip.NewParams()
+				authFromParams.Add("tag", fromTag)
+				authReq.AppendHeader(&sip.FromHeader{
+					Address: sip.Uri{User: fromUsername, Host: c.cfg.Host, Scheme: "sip"},
+					Params:  authFromParams,
+				})
+				authReq.AppendHeader(&sip.ToHeader{
+					Address: sip.Uri{User: targetNumber, Host: c.cfg.Host, Scheme: "sip"},
+				})
+				authReq.AppendHeader(&cid)
+				authReq.AppendHeader(&sip.CSeqHeader{SeqNo: 2, MethodName: sip.INVITE})
+				authReq.AppendHeader(&sip.ContactHeader{
+					Address: sip.Uri{User: fromUsername, Host: c.localIP, Port: c.cfg.Port, Scheme: "sip"},
+				})
+
+				if r.StatusCode == 407 {
+					authReq.AppendHeader(sip.NewHeader("Proxy-Authorization", cred))
+				} else {
+					authReq.AppendHeader(sip.NewHeader("Authorization", cred))
+				}
+
+				tx2, err := c.client.TransactionRequest(ctx, authReq, sipgo.ClientRequestAddVia)
+				if err != nil {
+					return nil, err
+				}
+				lastReq = authReq
+				tx = tx2
+				continue
+			}
+			return nil, fmt.Errorf("INVITE failed: %d %s", r.StatusCode, r.Reason)
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
-
-	return resp, nil
 }
 
-func (c *Client) sendACK(uri string, cseq int, toTag string) {
-	toHeader := fmt.Sprintf("<sip:%s@%s>", c.username, c.cfg.Host)
-	if toTag != "" {
-		toHeader = fmt.Sprintf("<sip:%s@%s>;tag=%s", c.username, c.cfg.Host, toTag)
+func (c *Client) buildACK(inviteReq *sip.Request, resp200 *sip.Response) *sip.Request {
+	targetURI := inviteReq.Recipient
+	if contact := resp200.Contact(); contact != nil {
+		targetURI = contact.Address
 	}
 
-	ack := fmt.Sprintf("ACK %s SIP/2.0\r\n"+
-		"Via: SIP/2.0/UDP %s:%d;rport;branch=z9hG4bK%d\r\n"+
-		"Max-Forwards: 70\r\n"+
-		"From: <sip:%s@%s>;tag=%s\r\n"+
-		"To: %s\r\n"+
-		"Call-ID: %s\r\n"+
-		"CSeq: %d ACK\r\n"+
-		"Content-Length: 0\r\n"+
-		"\r\n",
-		uri,
-		c.localIP, c.cfg.Port, rand.Int63(),
-		c.username, c.cfg.Host, c.fromTag,
-		toHeader,
-		c.callID,
-		cseq,
-	)
-	c.conn.Write([]byte(ack))
+	ack := sip.NewRequest(sip.ACK, targetURI)
+	if from := inviteReq.From(); from != nil {
+		ack.AppendHeader(sip.HeaderClone(from))
+	}
+	if to := resp200.To(); to != nil {
+		ack.AppendHeader(sip.HeaderClone(to))
+	}
+	if callID := inviteReq.CallID(); callID != nil {
+		ack.AppendHeader(sip.HeaderClone(callID))
+	}
+
+	cseq := inviteReq.CSeq()
+	ack.AppendHeader(&sip.CSeqHeader{
+		SeqNo:      cseq.SeqNo,
+		MethodName: sip.ACK,
+	})
+
+	maxFwd := sip.MaxForwardsHeader(70)
+	ack.AppendHeader(&maxFwd)
+
+	// Add Route headers from Record-Route in reverse order (RFC 3261 12.2.1.1)
+	recordRoutes := resp200.GetHeaders("Record-Route")
+	for i := len(recordRoutes) - 1; i >= 0; i-- {
+		ack.AppendHeader(sip.NewHeader("Route", recordRoutes[i].Value()))
+	}
+
+	return ack
+}
+
+func (c *Client) SessionRefresh() {
+	// Keepalive: send OPTIONS every 15 seconds if needed
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for i := 0; i < 20; i++ {
+		select {
+		case <-c.byeCh:
+			return
+		case <-ticker.C:
+			// No-op or lightweight keepalive
+		}
+	}
 }
 
 func (c *Client) Options(uri string) error {
-	cseq := c.cseq
-	c.cseq++
-
-	msg := fmt.Sprintf("OPTIONS %s SIP/2.0\r\n"+
-		"Via: SIP/2.0/UDP %s:%d;rport;branch=z9hG4bK%d\r\n"+
-		"Max-Forwards: 70\r\n"+
-		"From: <sip:%s@%s>;tag=%s\r\n"+
-		"To: <sip:%s@%s>\r\n"+
-		"Call-ID: keepalive-%d\r\n"+
-		"CSeq: %d OPTIONS\r\n"+
-		"Content-Length: 0\r\n"+
-		"\r\n",
-		uri,
-		c.localIP, c.cfg.Port, rand.Int63(),
-		c.username, c.cfg.Host, c.fromTag,
-		c.username, c.cfg.Host,
-		time.Now().UnixNano(),
-		cseq,
-	)
-	_, err := c.sendAndRead(msg)
-	return err
+	recipient := sip.Uri{Host: c.cfg.Host, Port: c.cfg.Port}
+	req := sip.NewRequest(sip.OPTIONS, recipient)
+	req.AppendHeader(sip.NewHeader("User-Agent", "Nimfadora/0.3.0"))
+	tx, err := c.client.TransactionRequest(context.Background(), req)
+	if err != nil {
+		return err
+	}
+	<-tx.Responses()
+	return nil
 }
 
 func (c *Client) Bye(uri string) error {
-	cseq := c.cseq
-	c.cseq++
-
-	msg := fmt.Sprintf("BYE %s SIP/2.0\r\n"+
-		"Via: SIP/2.0/UDP %s:%d;rport;branch=z9hG4bK%d\r\n"+
-		"Max-Forwards: 70\r\n"+
-		"From: \"%s\" <sip:%s@%s>;tag=%s\r\n"+
-		"To: <sip:%s@%s>\r\n"+
-		"Call-ID: %s\r\n"+
-		"CSeq: %d BYE\r\n"+
-		"Content-Length: 0\r\n"+
-		"\r\n",
-		uri,
-		c.localIP, c.cfg.Port, rand.Int63(),
-		c.username, c.username, c.cfg.Host, c.fromTag,
-		c.username, c.cfg.Host,
-		c.callID,
-		cseq,
-	)
-
-	_, err := c.sendAndRead(msg)
-	return err
+	if c.dialog != nil {
+		return c.dialog.Bye(context.Background())
+	}
+	return nil
 }
 
-func (c *Client) sendAuthRequest(method, uri string, challenge *Response) (*Response, error) {
-	isProxyAuth := challenge.StatusCode == 407
-	authHeaderName := "Authorization"
-
-	var challengeStr string
-	if isProxyAuth {
-		challengeStr = challenge.Headers["Proxy-Authenticate"]
-		authHeaderName = "Proxy-Authorization"
-	} else {
-		challengeStr = challenge.Headers["WWW-Authenticate"]
+func (c *Client) computeAuth(method, uri string, resp *sip.Response) (string, error) {
+	h := resp.GetHeader("WWW-Authenticate")
+	if h == nil {
+		h = resp.GetHeader("Proxy-Authenticate")
+	}
+	if h == nil {
+		return "", fmt.Errorf("no auth challenge header found")
 	}
 
-	chal, err := digest.ParseChallenge(challengeStr)
+	chal, err := digest.ParseChallenge(h.Value())
 	if err != nil {
-		return nil, fmt.Errorf("parse challenge: %w", err)
+		return "", fmt.Errorf("parse challenge: %w", err)
 	}
 
-	creds, err := digest.Digest(chal, digest.Options{
+	cred, err := digest.Digest(chal, digest.Options{
 		Method:   method,
 		URI:      uri,
-		Username: c.username,
+		Username: c.cfg.Username,
 		Password: c.cfg.Password,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("digest: %w", err)
+		return "", fmt.Errorf("compute digest: %w", err)
 	}
 
-	authHeaderValue := creds.String()
-
-	cseq := c.cseq
-	c.cseq++
-
-	// Build SDP body for INVITE re-auth
-	sdpBody := ""
-	contentType := ""
-	if method == "INVITE" && c.pendingRTPPort > 0 {
-		sdpBody = GenerateSDP(c.localIP, c.pendingRTPPort)
-		contentType = "Content-Type: application/sdp\r\n"
-	}
-
-	msg := fmt.Sprintf("%s %s SIP/2.0\r\n"+
-		"Via: SIP/2.0/UDP %s:%d;rport;branch=z9hG4bK%d\r\n"+
-		"Max-Forwards: 70\r\n"+
-		"From: \"%s\" <sip:%s@%s>;tag=%s\r\n"+
-		"To: <sip:%s@%s>\r\n"+
-		"Call-ID: %s\r\n"+
-		"CSeq: %d %s\r\n"+
-		"%s: %s\r\n"+
-		"Contact: <sip:%s@%s:%d>\r\n"+
-		"%s"+
-		"User-Agent: %s\r\n"+
-		"Content-Length: %d\r\n"+
-		"\r\n"+
-		"%s",
-		method, uri,
-		c.localIP, c.cfg.Port, rand.Int63(),
-		c.username, c.username, c.cfg.Host, c.fromTag,
-		c.username, c.cfg.Host,
-		c.callID,
-		cseq, method,
-		authHeaderName, authHeaderValue,
-		c.username, c.localIP, c.cfg.Port,
-		contentType,
-		c.cfg.UserAgent,
-		len(sdpBody),
-		sdpBody,
-	)
-
-	return c.sendAndRead(msg)
-}
-
-func GenerateSDP(localIP string, rtpPort int) string {
-	return fmt.Sprintf("v=0\r\n"+
-		"o=- 0 0 IN IP4 %s\r\n"+
-		"s=Nimfadora\r\n"+
-		"c=IN IP4 %s\r\n"+
-		"t=0 0\r\n"+
-		"m=audio %d RTP/AVP 0\r\n"+
-		"a=rtpmap:0 PCMU/8000\r\n"+
-		"a=ptime:20\r\n"+
-		"a=sendrecv\r\n",
-		localIP, localIP, rtpPort)
-}
-
-func parseResponse(raw string) *Response {
-	lines := strings.Split(raw, "\r\n")
-	if len(lines) == 0 {
-		return nil
-	}
-
-	resp := &Response{Headers: make(map[string]string)}
-
-	// Find SIP status line
-	for _, line := range lines {
-		if strings.HasPrefix(line, "SIP/2.0 ") {
-			parts := strings.SplitN(line, " ", 3)
-			if len(parts) >= 2 {
-				resp.StatusCode, _ = strconv.Atoi(parts[1])
-				if len(parts) >= 3 {
-					resp.Reason = parts[2]
-				}
-			}
-			break
-		}
-	}
-
-	inBody := false
-	var bodyLines []string
-	for _, line := range lines[1:] {
-		if inBody {
-			bodyLines = append(bodyLines, line)
-			continue
-		}
-		if line == "" {
-			inBody = true
-			continue
-		}
-		if idx := strings.Index(line, ":"); idx > 0 {
-			resp.Headers[strings.TrimSpace(line[:idx])] = strings.TrimSpace(line[idx+1:])
-		}
-	}
-
-	resp.Body = strings.Join(bodyLines, "\r\n")
-	return resp
-}
-
-func extractParam(header, param string) string {
-	idx := strings.Index(header, param+"=\"")
-	if idx < 0 {
-		return ""
-	}
-	rest := header[idx+len(param)+2:]
-	end := strings.Index(rest, "\"")
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
-}
-
-func generateTag() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano()%1000000)
-}
-
-func extractTag(header string) string {
-	idx := strings.Index(header, "tag=")
-	if idx < 0 {
-		return ""
-	}
-	rest := header[idx+4:]
-	end := strings.IndexAny(rest, ";,> ")
-	if end < 0 {
-		return rest
-	}
-	return rest[:end]
+	return cred.String(), nil
 }
 
 func getLocalIPMust() string {

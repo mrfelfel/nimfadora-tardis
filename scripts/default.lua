@@ -1,16 +1,16 @@
 -- Nimfadora call script
--- Edit this to change call behavior
+-- Autonomous Telephony Flow Definition
 
 agent = {
     name = "Nimfadora",
-    language = "fa",
-    intro = "سلام، من نمیفادورا هستم، یک هوش مصنوعی.",
+    language = "en",
+    intro = "Hello, I am Nimfadora TARDIS, an AI assistant.",
 }
 
 function greet()
     return {
         action = "say",
-        text = agent.intro .. " می‌تونم کمکتون کنم؟",
+        text = agent.intro .. " How can I help you today?",
         next = "listen_for_response"
     }
 end
@@ -22,7 +22,7 @@ end
 function handle_response()
     return {
         action = "ask_brain",
-        system_prompt = "تو یک دستیار تلفنی هستی. پاسخ کوتاه بده.",
+        system_prompt = "You are a helpful phone assistant. Keep answers concise.",
         next = "speak_reply"
     }
 end
@@ -34,7 +34,7 @@ end
 function hangup()
     return {
         action = "say",
-        text = "ممنون، روز خوبی داشته باشید.",
+        text = "Thank you, have a wonderful day.",
         next = "disconnect"
     }
 end

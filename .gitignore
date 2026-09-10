@@ -3,4 +3,10 @@
 *.wav
 *.pcm
 tmp/
-nimfadora
+/nimfadora
+/tardis
+config.yaml
+*.key
+*.pem
+credentials.json
+.claude/

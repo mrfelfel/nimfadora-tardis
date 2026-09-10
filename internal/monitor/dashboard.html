@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nimfadora — Real-Time Monitor</title>
+<style>
+  :root {
+    --bg: #0a0e17; --card: #111827; --border: #1e293b;
+    --text: #e2e8f0; --dim: #64748b; --accent: #3b82f6;
+    --green: #22c55e; --yellow: #eab308; --red: #ef4444;
+    --purple: #a855f7; --cyan: #06b6d4;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'JetBrains Mono', monospace;
+    background: var(--bg); color: var(--text);
+    direction: ltr; padding: 16px;
+  }
+  h1 { font-size: 20px; color: var(--cyan); margin-bottom: 16px; }
+  .status-bar {
+    display: flex; gap: 12px; align-items: center;
+    margin-bottom: 16px; font-size: 13px;
+  }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .connected { background: var(--green); }
+  .disconnected { background: var(--red); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px; margin-bottom: 16px;
+  }
+  .kpi {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px; text-align: center;
+  }
+  .kpi-label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
+  .kpi-value { font-size: 28px; font-weight: bold; margin: 6px 0; }
+  .kpi-unit { font-size: 11px; color: var(--dim); }
+  .kpi.green .kpi-value { color: var(--green); }
+  .kpi.yellow .kpi-value { color: var(--yellow); }
+  .kpi.red .kpi-value { color: var(--red); }
+  .kpi.blue .kpi-value { color: var(--accent); }
+  .kpi.purple .kpi-value { color: var(--purple); }
+  .kpi.cyan .kpi-value { color: var(--cyan); }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .chart-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px;
+  }
+  .chart-title { font-size: 12px; color: var(--dim); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+  canvas { width: 100%; height: 180px; }
+  .pipeline {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; margin-bottom: 16px;
+  }
+  .pipeline-title { font-size: 12px; color: var(--dim); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .pipeline-flow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .pipe-node {
+    background: #1e293b; border-radius: 6px; padding: 8px 12px;
+    font-size: 11px; text-align: center; min-width: 80px;
+    border: 2px solid var(--border); transition: border-color 0.3s;
+  }
+  .pipe-node.active { border-color: var(--green); }
+  .pipe-node.slow { border-color: var(--yellow); }
+  .pipe-node.error { border-color: var(--red); }
+  .pipe-node .node-name { color: var(--dim); }
+  .pipe-node .node-time { font-size: 16px; font-weight: bold; color: var(--text); margin: 4px 0; }
+  .pipe-node .node-status { font-size: 10px; }
+  .pipe-arrow { color: var(--dim); font-size: 18px; }
+  .log-box {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px; max-height: 300px;
+    overflow-y: auto; font-size: 12px; line-height: 1.6;
+  }
+  .log-entry { color: var(--dim); }
+  .log-entry .ts { color: var(--dim); }
+  .log-entry .metric { color: var(--cyan); }
+  .log-entry .value { color: var(--green); font-weight: bold; }
+  .full-width { grid-column: 1 / -1; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr 1fr; } .charts { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>NIMFADOR — Real-Time Audio Pipeline Monitor</h1>
+
+<div class="status-bar">
+  <div id="statusDot" class="status-dot disconnected"></div>
+  <span id="statusText">Connecting...</span>
+  <span style="color:var(--dim); margin-left:auto;" id="turnCounter">Turn: 0</span>
+  <span style="color:var(--dim);" id="clockDisplay">--:--:--</span>
+</div>
+
+<!-- KPI Cards -->
+<div class="grid">
+  <div class="kpi green" id="kpi-stt">
+    <div class="kpi-label">STT Latency</div>
+    <div class="kpi-value">--</div>
+    <div class="kpi-unit">ms</div>
+  </div>
+  <div class="kpi blue" id="kpi-brain">
+    <div class="kpi-label">Brain (LLM)</div>
+    <div class="kpi-value">--</div>
+    <div class="kpi-unit">ms</div>
+  </div>
+  <div class="kpi purple" id="kpi-tts">
+    <div class="kpi-label">TTS Generate</div>
+    <div class="kpi-value">--</div>
+    <div class="kpi-unit">ms</div>
+  </div>
+  <div class="kpi cyan" id="kpi-total">
+    <div class="kpi-label">Total Turn Latency</div>
+    <div class="kpi-value">--</div>
+    <div class="kpi-unit">ms</div>
+  </div>
+</div>
+
+<!-- Pipeline Visualization -->
+<div class="pipeline">
+  <div class="pipeline-title">Live Pipeline</div>
+  <div class="pipeline-flow">
+    <div class="pipe-node" id="pipe-rtp">
+      <div class="node-name">RTP Recv</div>
+      <div class="node-time">--</div>
+      <div class="node-status" style="color:var(--dim)">waiting</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node" id="pipe-stt">
+      <div class="node-name">STT</div>
+      <div class="node-time">--</div>
+      <div class="node-status" style="color:var(--dim)">idle</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node" id="pipe-brain">
+      <div class="node-name">Brain</div>
+      <div class="node-time">--</div>
+      <div class="node-status" style="color:var(--dim)">idle</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node" id="pipe-tts">
+      <div class="node-name">TTS</div>
+      <div class="node-time">--</div>
+      <div class="node-status" style="color:var(--dim)">idle</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node" id="pipe-play">
+      <div class="node-name">Play</div>
+      <div class="node-time">--</div>
+      <div class="node-status" style="color:var(--dim)">idle</div>
+    </div>
+    <div class="pipe-arrow">→</div>
+    <div class="pipe-node" id="pipe-rtp-send">
+      <div class="node-name">RTP Send</div>
+      <div class="node-time">--</div>
+      <div class="node-status" style="color:var(--dim)">idle</div>
+    </div>
+  </div>
+</div>
+
+<!-- Charts -->
+<div class="charts">
+  <div class="chart-box">
+    <div class="chart-title">Latency Over Time (ms)</div>
+    <canvas id="latencyChart"></canvas>
+  </div>
+  <div class="chart-box">
+    <div class="chart-title">Pipeline Breakdown (ms)</div>
+    <canvas id="breakdownChart"></canvas>
+  </div>
+  <div class="chart-box">
+    <div class="chart-title">RTP Packet Rate (pkt/sec)</div>
+    <canvas id="rtpChart"></canvas>
+  </div>
+  <div class="chart-box">
+    <div class="chart-title">Audio Buffer Level (bytes)</div>
+    <canvas id="bufferChart"></canvas>
+  </div>
+</div>
+
+<!-- Event Log -->
+<div class="log-box" id="logBox">
+  <div class="log-entry"><span class="ts">--:--:--</span> <span class="metric">Waiting for connection...</span></div>
+</div>
+
+<script>
+const MAX_POINTS = 120;
+let ws, latencyData = [], breakdownData = [], rtpData = [], bufferData = [];
+let rtpCount = 0, rtpLastSec = 0;
+let lastMetrics = {};
+let currentTurn = 0;
+
+// Chart drawing
+function drawLineChart(canvasId, datasets, yLabel) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.offsetWidth * 2;
+  const H = canvas.height = canvas.offsetHeight * 2;
+  ctx.clearRect(0, 0, W, H);
+
+  let allValues = datasets.flatMap(d => d.data).filter(v => v !== null && v !== undefined);
+  if (allValues.length === 0) return;
+  let maxVal = Math.max(...allValues) * 1.2 || 100;
+  let minVal = 0;
+
+  const padL = 50, padR = 10, padT = 10, padB = 30;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  // Grid
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + (plotH * i / 4);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillStyle = '#64748b'; ctx.font = '18px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round(maxVal - (maxVal * i / 4)), padL - 8, y + 6);
+  }
+
+  // Lines
+  const colors = ['#22c55e', '#3b82f6', '#a855f7', '#06b6d4', '#ef4444'];
+  datasets.forEach((ds, di) => {
+    const data = ds.data;
+    if (!data || data.length === 0) return;
+    ctx.strokeStyle = colors[di % colors.length];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    data.forEach((v, i) => {
+      if (v === null) return;
+      const x = padL + (plotW * i / (MAX_POINTS - 1));
+      const y = padT + plotH * (1 - v / maxVal);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+
+  // Labels
+  ctx.fillStyle = '#64748b'; ctx.font = '16px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(yLabel, W / 2, H - 4);
+}
+
+function drawBarChart(canvasId, data) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.offsetWidth * 2;
+  const H = canvas.height = canvas.offsetHeight * 2;
+  ctx.clearRect(0, 0, W, H);
+
+  const labels = ['STT', 'Brain', 'TTS', 'Play', 'Total'];
+  const colors = ['#22c55e', '#3b82f6', '#a855f7', '#06b6d4', '#eab308'];
+  const values = [data.stt || 0, data.brain || 0, data.tts || 0, data.play || 0, data.total || 0];
+  const maxVal = Math.max(...values) * 1.2 || 100;
+  const padL = 50, padR = 10, padT = 10, padB = 40;
+  const barW = (W - padL - padR) / labels.length * 0.6;
+  const gap = (W - padL - padR) / labels.length;
+
+  values.forEach((v, i) => {
+    const x = padL + gap * i + (gap - barW) / 2;
+    const barH = (v / maxVal) * (H - padT - padB);
+    const y = H - padB - barH;
+
+    ctx.fillStyle = colors[i];
+    ctx.beginPath();
+    ctx.roundRect(x, y, barW, barH, 6);
+    ctx.fill();
+
+    ctx.fillStyle = '#e2e8f0'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'center';
+    ctx.fillText(Math.round(v), x + barW / 2, y - 8);
+
+    ctx.fillStyle = '#64748b'; ctx.font = '14px monospace';
+    ctx.fillText(labels[i], x + barW / 2, H - 10);
+  });
+}
+
+function setKPI(id, value, unit) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const valEl = el.querySelector('.kpi-value');
+  valEl.textContent = value === null || value === undefined ? '--' : Math.round(value);
+  el.className = 'kpi ' + (value > 3000 ? 'red' : value > 1500 ? 'yellow' : 'green');
+  if (id === 'kpi-total') el.className = 'kpi ' + (value > 5000 ? 'red' : value > 3000 ? 'yellow' : value > 1500 ? 'blue' : 'cyan');
+}
+
+function setPipeNode(id, time, status, state) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.querySelector('.node-time').textContent = time;
+  el.querySelector('.node-status').textContent = status;
+  el.className = 'pipe-node ' + (state || '');
+}
+
+function pushData(arr, val) {
+  arr.push(val);
+  if (arr.length > MAX_POINTS) arr.shift();
+}
+
+function addLog(text) {
+  const box = document.getElementById('logBox');
+  const now = new Date().toLocaleTimeString();
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.innerHTML = `<span class="ts">${now}</span> ${text}`;
+  box.appendChild(div);
+  if (box.children.length > 200) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
+}
+
+function handleEvent(ev) {
+  if (ev.type === 'metric') {
+    lastMetrics[ev.name] = { value: ev.value, time: ev.time };
+    const age = Date.now() - ev.time;
+    if (age > 10000) return; // skip stale
+
+    switch (ev.name) {
+      case 'turn_start':
+        currentTurn = Math.round(ev.value);
+        document.getElementById('turnCounter').textContent = `Turn: ${currentTurn}`;
+        // Reset pipeline
+        ['pipe-rtp','pipe-stt','pipe-brain','pipe-tts','pipe-play','pipe-rtp-send'].forEach(id =>
+          setPipeNode(id, '--', 'waiting', ''));
+        addLog(`<span class="metric">Turn ${currentTurn} started</span>`);
+        break;
+      case 'stt_duration':
+        pushData(latencyData, ev.value);
+        setKPI('kpi-stt', ev.value);
+        setPipeNode('pipe-stt', Math.round(ev.value) + 'ms', 'done', ev.value > 3000 ? 'slow' : 'active');
+        addLog(`<span class="metric">STT:</span> <span class="value">${Math.round(ev.value)}ms</span>`);
+        break;
+      case 'brain_duration':
+        setKPI('kpi-brain', ev.value);
+        setPipeNode('pipe-brain', Math.round(ev.value) + 'ms', 'done', ev.value > 2000 ? 'slow' : 'active');
+        addLog(`<span class="metric">Brain:</span> <span class="value">${Math.round(ev.value)}ms</span>`);
+        break;
+      case 'tts_duration':
+        setKPI('kpi-tts', ev.value);
+        setPipeNode('pipe-tts', Math.round(ev.value) + 'ms', 'done', ev.value > 2000 ? 'slow' : 'active');
+        addLog(`<span class="metric">TTS:</span> <span class="value">${Math.round(ev.value)}ms</span>`);
+        break;
+      case 'tts_play':
+        setPipeNode('pipe-play', Math.round(ev.value) + 'ms', 'playing', 'active');
+        addLog(`<span class="metric">Play:</span> <span class="value">${Math.round(ev.value)}ms</span>`);
+        break;
+      case 'total_latency':
+        setKPI('kpi-total', ev.value);
+        setPipeNode('pipe-rtp-send', Math.round(ev.value) + 'ms', 'done', ev.value > 4000 ? 'slow' : 'active');
+        addLog(`<span class="metric">TOTAL:</span> <span class="value">${Math.round(ev.value)}ms</span>`);
+        pushData(breakdownData, ev.value);
+        break;
+      case 'rtp_packet':
+        rtpCount++;
+        break;
+      case 'rtp_bytes_sent':
+        setPipeNode('pipe-rtp-send', Math.round(ev.value) + 'B', 'sent', 'active');
+        break;
+    }
+    // Update breakdown bars
+    drawBarChart('breakdownChart', {
+      stt: lastMetrics.stt_duration?.value,
+      brain: lastMetrics.brain_duration?.value,
+      tts: lastMetrics.tts_duration?.value,
+      play: lastMetrics.tts_play?.value,
+      total: lastMetrics.total_latency?.value,
+    });
+    drawLineChart('latencyChart', [{ data: latencyData }], 'STT ms');
+    drawLineChart('bufferChart', [{ data: breakdownData }], 'Total ms');
+  }
+}
+
+// RTP rate counter
+setInterval(() => {
+  rtpData.push(rtpCount);
+  if (rtpData.length > MAX_POINTS) rtpData.shift();
+  rtpCount = 0;
+  drawLineChart('rtpChart', [{ data: rtpData }], 'pkt/s');
+}, 1000);
+
+// Clock
+setInterval(() => {
+  document.getElementById('clockDisplay').textContent = new Date().toLocaleTimeString();
+}, 1000);
+
+// WebSocket
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('statusDot').className = 'status-dot connected';
+    document.getElementById('statusText').textContent = 'Connected';
+    addLog('<span class="metric">WebSocket connected</span>');
+  };
+
+  ws.onmessage = (msg) => {
+    try {
+      const data = JSON.parse(msg.data);
+      if (data.type === 'history' && data.events) {
+        data.events.forEach(handleEvent);
+      } else if (data.type === 'metric') {
+        handleEvent(data);
+      }
+    } catch(e) {}
+  };
+
+  ws.onclose = () => {
+    document.getElementById('statusDot').className = 'status-dot disconnected';
+    document.getElementById('statusText').textContent = 'Reconnecting...';
+    addLog('<span class="metric" style="color:var(--red)">Disconnected</span>');
+    setTimeout(connect, 2000);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+connect();
+</script>
+</body>
+</html>
