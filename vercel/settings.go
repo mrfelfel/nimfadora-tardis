@@ -1,4 +1,4 @@
-package api
+package main
 
 import (
 	"encoding/json"
@@ -47,7 +47,10 @@ var (
 
 func loadDashboard() {
 	loadOnce.Do(func() {
-		data, err := os.ReadFile("dashboard.html")
+		data, err := os.ReadFile("vercel/dashboard.html")
+		if err != nil {
+			data, err = os.ReadFile("dashboard.html")
+		}
 		if err == nil {
 			dashboardHTML = data
 		}
@@ -55,7 +58,10 @@ func loadDashboard() {
 }
 
 func loadConfigFromDisk() {
-	data, err := os.ReadFile("config.json")
+	data, err := os.ReadFile("vercel/config.json")
+	if err != nil {
+		data, err = os.ReadFile("config.json")
+	}
 	if err != nil {
 		return
 	}
@@ -74,7 +80,7 @@ func saveConfigToDisk() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile("config.json", data, 0644)
+	return os.WriteFile("vercel/config.json", data, 0644)
 }
 
 // Handler is the Vercel serverless entry point.

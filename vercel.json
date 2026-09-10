@@ -4,17 +4,17 @@
   "cleanUrls": true,
   "builds": [
     {
-      "src": "settings.go",
+      "src": "vercel/*.go",
       "use": "@vercel/go",
       "config": {
-        "includeFiles": ["dashboard.html"]
+        "includeFiles": ["vercel/dashboard.html"]
       }
     }
   ],
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/settings" },
-    { "source": "/mcp", "destination": "/settings" },
-    { "source": "/(.*)", "destination": "/settings" }
+    { "source": "/api/(.*)", "destination": "/vercel" },
+    { "source": "/mcp", "destination": "/vercel" },
+    { "source": "/(.*)", "destination": "/vercel" }
   ],
   "headers": [
     {
