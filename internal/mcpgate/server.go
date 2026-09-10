@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/nimfadora/tardis/internal/config"
 )
 
 //go:embed dashboard.html
@@ -18,14 +20,16 @@ type AgentRunner interface {
 }
 
 type Server struct {
-	gateway *Gateway
-	agent   AgentRunner
+	gateway  *Gateway
+	agent    AgentRunner
+	settings *config.SettingsStore
 }
 
-func NewServer(gateway *Gateway, agent AgentRunner) *Server {
+func NewServer(gateway *Gateway, agent AgentRunner, settings *config.SettingsStore) *Server {
 	return &Server{
-		gateway: gateway,
-		agent:   agent,
+		gateway:  gateway,
+		agent:    agent,
+		settings: settings,
 	}
 }
 
@@ -37,6 +41,9 @@ func (s *Server) Start(addr string) error {
 
 	// Agent Chat API
 	mux.HandleFunc("/api/agent/chat", s.handleAgentChat)
+
+	// Settings API
+	mux.HandleFunc("/api/settings", s.handleSettings)
 
 	// MCP Gateway Endpoints (Protocol 2026-07-28 & JSON-RPC)
 	mux.HandleFunc("/mcp", s.handleMCP)
@@ -82,6 +89,43 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		settings := s.settings.Get()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(settings)
+
+	case http.MethodPut:
+		var incoming config.Settings
+		if err := json.NewDecoder(r.Body).Decode(&incoming); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.settings.Set(incoming); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		// Apply gateway policy changes immediately
+		gwCfg := config.GatewayConfig{
+			AllowDangerous:  incoming.Gateway.AllowDangerous,
+			RequireApproval: incoming.Gateway.RequireApproval,
+			AllowedTools:    incoming.Gateway.AllowedTools,
+			DeniedTools:     incoming.Gateway.DeniedTools,
+			CodingBackend:   incoming.Gateway.CodingBackend,
+			CodingModel:     incoming.Gateway.CodingModel,
+		}
+		s.gateway.SetConfig(gwCfg)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok", "message": "Settings saved and applied"})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {

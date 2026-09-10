@@ -37,7 +37,7 @@ func main() {
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		log.Printf("[init] warning: config file not loaded (%v), using default settings", err)
+		log.Printf("[init] config file not loaded (%v), using defaults", err)
 		cfg = &config.Config{}
 	}
 
@@ -49,12 +49,15 @@ func main() {
 	fmt.Println(" Nimfadora TARDIS - MCP Gateway & Autonomous Agent")
 	fmt.Println()
 
-	// 1. Initialize Pipeline Metrics
+	// 1. Settings Store (Web UI configuration persistence)
+	settings := config.NewSettingsStore(*configPath)
+
+	// 2. Pipeline Metrics
 	metrics := monitor.NewMetrics()
 	monServer := monitor.NewServer(metrics)
 	monServer.Start("0.0.0.0:8199")
 
-	// 2. Initialize Internal Telephony (Optional / Graceful)
+	// 3. Internal Telephony (Optional)
 	var callHandler *call.Handler
 	if cfg.SIP.Username != "" && cfg.SIP.Password != "" {
 		ttsEngine := tts.New(cfg.TTS)
@@ -65,7 +68,7 @@ func main() {
 		sipClient, err := sip.NewClient(cfg.SIP, *transport)
 		if err == nil {
 			if err := sipClient.Register(); err == nil {
-				log.Printf("[telephony] SIP registered → %s:%d (%s)", cfg.SIP.Host, cfg.SIP.Port, *transport)
+				log.Printf("[telephony] SIP registered -> %s:%d (%s)", cfg.SIP.Host, cfg.SIP.Port, *transport)
 				var brainClient *brain.Mimo
 				if cfg.Brain.APIKey != "" {
 					brainClient = brain.New(cfg.Brain)
@@ -75,52 +78,69 @@ func main() {
 				apiServer.Start("0.0.0.0:8200")
 				callHandler.RegisterAPI(apiServer)
 			} else {
-				log.Printf("[telephony] SIP registration notice: %v (running in voice-simulated mode)", err)
+				log.Printf("[telephony] SIP registration notice: %v (voice-simulated mode)", err)
 			}
 		} else {
 			log.Printf("[telephony] SIP client notice: %v", err)
 		}
 	} else {
-		log.Println("[telephony] SIP credentials not provided. Telephony module running in simulation mode.")
+		log.Println("[telephony] SIP credentials not provided. Running in simulation mode.")
 	}
 
-	// 3. Initialize MCP Gateway (ToolPlane Control Plane)
-	gateway := mcpgate.New(cfg.Gateway)
-	mcpgate.RegisterDefaultTools(gateway, callHandler, cfg.Gateway.CodingBackend, cfg.Gateway.CodingModel)
+	// 4. MCP Gateway
+	gwCfg := config.GatewayConfig{
+		AllowDangerous:  settings.Get().Gateway.AllowDangerous,
+		RequireApproval: settings.Get().Gateway.RequireApproval,
+		AllowedTools:    settings.Get().Gateway.AllowedTools,
+		DeniedTools:     settings.Get().Gateway.DeniedTools,
+		CodingBackend:   settings.Get().Gateway.CodingBackend,
+		CodingModel:     settings.Get().Gateway.CodingModel,
+	}
+	gateway := mcpgate.New(gwCfg)
+	mcpgate.RegisterDefaultTools(gateway, callHandler, gwCfg.CodingBackend, gwCfg.CodingModel)
 
-	// 4. Initialize Brain & Autonomous TARDIS Agent
+	// 5. Brain & Autonomous Agent
 	var brainClient *brain.Mimo
-	if cfg.Brain.APIKey != "" {
-		brainClient = brain.New(cfg.Brain)
-		log.Printf("[agent] Brain initialized with model: %s", cfg.Brain.Model)
+	s := settings.Get()
+	if s.Brain.APIKey != "" {
+		bc := config.BrainConfig{
+			APIKey:      s.Brain.APIKey,
+			BaseURL:     s.Brain.BaseURL,
+			Model:       s.Brain.Model,
+			MaxTokens:   s.Brain.MaxTokens,
+			Temperature: s.Brain.Temperature,
+		}
+		brainClient = brain.New(bc)
+		log.Printf("[agent] Brain initialized: model=%s base_url=%s", s.Brain.Model, s.Brain.BaseURL)
 	} else {
-		log.Println("[agent] Warning: BRAIN_API_KEY is not set. Brain responses will need an API key.")
+		log.Println("[agent] Brain API key not set. Configure via Web UI -> Settings.")
 	}
 
 	tardisAgent := agent.New(brainClient, gateway)
 
-	// 5. Start Web Control Plane & MCP Server
-	server := mcpgate.NewServer(gateway, tardisAgent)
+	// 6. Web Control Plane & MCP Server
+	server := mcpgate.NewServer(gateway, tardisAgent, settings)
 	go func() {
 		if err := server.Start(*gatewayAddr); err != nil {
 			log.Fatalf("[gateway] server failed: %v", err)
 		}
 	}()
 
-	log.Printf("[ready] TARDIS Web UI & Agent Chat: http://%s", *gatewayAddr)
-	log.Printf("[ready] MCP Gateway Endpoint:       http://%s/mcp", *gatewayAddr)
-	log.Printf("[ready] Metrics Dashboard:          http://0.0.0.0:8199")
+	log.Printf("[ready] Web UI & Agent Chat: http://%s", *gatewayAddr)
+	log.Printf("[ready] MCP Gateway:        http://%s/mcp", *gatewayAddr)
+	log.Printf("[ready] Settings Panel:      http://%s (Settings tab)", *gatewayAddr)
+	log.Printf("[ready] Metrics Dashboard:   http://0.0.0.0:8199")
 
-	// Direct CLI call test if requested
+	// Direct CLI call test
 	if *target != "" && callHandler != nil {
 		from := *fromNumber
 		if from == "" {
 			from = cfg.SIP.FromNumber
 		}
 		go func() {
-			log.Printf("[call] Initiating direct test call to %s", *target)
+			log.Printf("[call] Direct test call to %s", *target)
 			if err := callHandler.Call(context.Background(), *target, from, *greeting); err != nil {
-				log.Printf("[call] direct call error: %v", err)
+				log.Printf("[call] call error: %v", err)
 			}
 		}()
 	}
@@ -128,5 +148,5 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
-	log.Println("[done] TARDIS shutting down cleanly")
+	log.Println("[done] TARDIS shutting down")
 }

@@ -31,6 +31,21 @@ func New(cfg config.GatewayConfig) *Gateway {
 	}
 }
 
+// GetConfig returns a copy of the current gateway configuration
+func (g *Gateway) GetConfig() config.GatewayConfig {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.cfg
+}
+
+// SetConfig updates the gateway configuration at runtime (hot-reload)
+func (g *Gateway) SetConfig(cfg config.GatewayConfig) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.cfg = cfg
+	log.Printf("[mcpgate] configuration updated: coding_backend=%s coding_model=%s allow_dangerous=%v", cfg.CodingBackend, cfg.CodingModel, cfg.AllowDangerous)
+}
+
 // RegisterTool adds a tool with its handler and MCP schema
 func (g *Gateway) RegisterTool(tool Tool, handler ToolHandler) {
 	g.mu.Lock()

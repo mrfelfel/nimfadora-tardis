@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TARDIS Control Plane & Agent</title>
+  <title>TARDIS Control Plane</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
   <style>
@@ -13,60 +13,28 @@
       --border: #30363d;
       --text: #c9d1d9;
       --accent: #58a6ff;
-      --purple: #bc8cff;
       --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
     }
-    body {
-      background-color: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-    .card {
-      background-color: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-    }
-    .nav-tabs .nav-link {
-      color: var(--text);
-      border: none;
-      border-bottom: 2px solid transparent;
-    }
-    .nav-tabs .nav-link.active {
-      background: transparent;
-      color: var(--accent);
-      border-bottom: 2px solid var(--accent);
-      font-weight: 600;
-    }
+    body { background-color: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .card { background-color: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; }
+    .nav-tabs .nav-link { color: var(--text); border: none; border-bottom: 2px solid transparent; }
+    .nav-tabs .nav-link.active { background: transparent; color: var(--accent); border-bottom: 2px solid var(--accent); font-weight: 600; }
     .badge-approved { background-color: rgba(63, 185, 80, 0.2); color: var(--green); border: 1px solid var(--green); }
-    .badge-pending { background-color: rgba(210, 153, 34, 0.2); color: #d29922; border: 1px solid #d29922; }
-    .badge-rejected { background-color: rgba(248, 81, 73, 0.2); color: #f85149; border: 1px solid #f85149; }
-    .chat-box {
-      height: 480px;
-      overflow-y: auto;
-      border: 1px solid var(--border);
-      background: #090d13;
-      border-radius: 6px;
-      padding: 15px;
-    }
-    .msg-user {
-      background: #1f6feb;
-      color: white;
-      border-radius: 12px 12px 0 12px;
-      padding: 8px 14px;
-      margin-bottom: 10px;
-      max-width: 80%;
-      margin-left: auto;
-    }
-    .msg-agent {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      color: var(--text);
-      border-radius: 12px 12px 12px 0;
-      padding: 8px 14px;
-      margin-bottom: 10px;
-      max-width: 80%;
-    }
+    .badge-pending { background-color: rgba(210, 153, 34, 0.2); color: var(--yellow); border: 1px solid var(--yellow); }
+    .badge-rejected { background-color: rgba(248, 81, 73, 0.2); color: var(--red); border: 1px solid var(--red); }
+    .chat-box { height: 480px; overflow-y: auto; border: 1px solid var(--border); background: #090d13; border-radius: 6px; padding: 15px; }
+    .msg-user { background: #1f6feb; color: white; border-radius: 12px 12px 0 12px; padding: 8px 14px; margin-bottom: 10px; max-width: 80%; margin-left: auto; }
+    .msg-agent { background: var(--card-bg); border: 1px solid var(--border); color: var(--text); border-radius: 12px 12px 12px 0; padding: 8px 14px; margin-bottom: 10px; max-width: 80%; }
     pre code { color: #f0883e; }
+    .form-control, .form-select { background-color: #0d1117 !important; color: var(--text) !important; border-color: var(--border) !important; }
+    .form-control:focus, .form-select:focus { background-color: #0d1117 !important; color: var(--text) !important; border-color: var(--accent) !important; box-shadow: 0 0 0 2px rgba(88,166,255,0.25) !important; }
+    .form-label { color: var(--text); font-weight: 500; font-size: 0.85rem; }
+    .settings-section { border-left: 3px solid var(--accent); padding-left: 16px; margin-bottom: 28px; }
+    .settings-section h6 { color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.75rem; margin-bottom: 14px; }
+    .form-text { font-size: 0.78rem; }
+    #settingsToast { position: fixed; bottom: 24px; right: 24px; z-index: 9999; }
   </style>
 </head>
 <body class="p-3">
@@ -74,74 +42,235 @@
     <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom border-secondary">
       <div>
         <h4 class="mb-0 text-white"><i class="bi bi-robot text-primary me-2"></i>Nimfadora TARDIS</h4>
-        <small class="text-secondary">MCP Gateway & Autonomous Agent Control Plane (Protocol 2026-07-28)</small>
+        <small class="text-secondary">MCP Gateway & Autonomous Agent Control Plane</small>
       </div>
-      <div>
-        <span class="badge bg-dark border border-secondary text-secondary me-2">Gateway: :8080/mcp</span>
+      <div class="d-flex align-items-center gap-2">
+        <span class="badge bg-dark border border-secondary text-secondary">MCP: /mcp</span>
         <span class="badge bg-success-subtle text-success border border-success">Online</span>
       </div>
     </div>
 
     <ul class="nav nav-tabs mb-3" id="tabNav">
-      <li class="nav-item">
-        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-chat"><i class="bi bi-chat-dots me-1"></i>Agent Chat</button>
-      </li>
-      <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-approvals"><i class="bi bi-shield-check me-1"></i>Approvals <span id="approvalBadge" class="badge bg-warning text-dark d-none">0</span></button>
-      </li>
-      <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tools"><i class="bi bi-tools me-1"></i>MCP Tools</button>
-      </li>
-      <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-audit"><i class="bi bi-journal-text me-1"></i>Audit Logs</button>
-      </li>
+      <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-chat"><i class="bi bi-chat-dots me-1"></i>Agent Chat</button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-settings"><i class="bi bi-gear me-1"></i>Settings</button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-approvals"><i class="bi bi-shield-check me-1"></i>Approvals <span id="approvalBadge" class="badge bg-warning text-dark d-none">0</span></button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tools"><i class="bi bi-tools me-1"></i>MCP Tools</button></li>
+      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-audit"><i class="bi bi-journal-text me-1"></i>Audit Logs</button></li>
     </ul>
 
     <div class="tab-content">
-      <!-- CHAT TAB -->
+      <!-- ============ CHAT TAB ============ -->
       <div class="tab-pane fade show active" id="tab-chat">
         <div class="row">
           <div class="col-lg-8">
             <div class="card p-3">
               <div class="chat-box mb-3" id="chatBox">
-                <div class="msg-agent">
-                  <strong>Nimfadora TARDIS:</strong>
-                  <div>Hello! I am Nimfadora TARDIS, your autonomous AI orchestrator and MCP Gateway. I can analyze tasks with fast models, delegate programming to OpenCode or Claude Code, perform multi-agent research, or place voice alerts over SIP. How can I assist you?</div>
-                </div>
+                <div class="msg-agent"><strong>TARDIS:</strong><div>Hello! I am Nimfadora TARDIS. I can delegate coding to OpenCode/Claude Code, run research, or place voice alerts over SIP. Configure brain models in the Settings tab first. How can I help?</div></div>
               </div>
               <div class="input-group">
-                <input type="text" id="queryInput" class="form-control bg-dark text-white border-secondary" placeholder="Type a task (e.g. 'Build a microservice in Go', 'Research MCP Gateway specs', 'Send a voice alert')..." onkeydown="if(event.key==='Enter') sendChat()">
+                <input type="text" id="queryInput" class="form-control" placeholder="Ask anything..." onkeydown="if(event.key==='Enter') sendChat()">
                 <button class="btn btn-primary" onclick="sendChat()" id="sendBtn"><i class="bi bi-send"></i> Send</button>
               </div>
             </div>
           </div>
           <div class="col-lg-4">
             <div class="card p-3 mb-3">
-              <h6 class="text-white"><i class="bi bi-cpu me-2"></i>Agent Capabilities</h6>
+              <h6 class="text-white"><i class="bi bi-cpu me-2"></i>Capabilities</h6>
               <ul class="list-unstyled mb-0 small">
-                <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i><strong>Routing:</strong> Fast Mimo/LLM decisions</li>
-                <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i><strong>Coding Agent:</strong> OpenCode / Claude Code / Bash</li>
-                <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i><strong>Research Agent:</strong> Autonomous repository & web exploration</li>
-                <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i><strong>Telephony:</strong> SIP Outbound Call via Navaphone</li>
-                <li><i class="bi bi-shield-lock text-warning me-2"></i><strong>Governance:</strong> Policy, Rate-limit & Human Approval</li>
+                <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i><strong>Brain:</strong> <span id="brainStatus">Not configured</span></li>
+                <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i><strong>Coding:</strong> <span id="codingStatus">opencode / glm-4</span></li>
+                <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i><strong>Research:</strong> Codebase & web</li>
+                <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i><strong>Telephony:</strong> SIP voice alerts</li>
+                <li><i class="bi bi-shield-lock text-warning me-2"></i><strong>Governance:</strong> Approval & audit</li>
               </ul>
             </div>
             <div class="card p-3">
               <h6 class="text-white"><i class="bi bi-link-45deg me-2"></i>Connect External Agent</h6>
-              <p class="small text-secondary mb-2">Configure Claude Desktop, Cursor, or OpenCode to connect to TARDIS MCP Gateway:</p>
-              <pre class="bg-dark p-2 rounded small text-secondary"><code>{
-  "mcpServers": {
-    "tardis": {
-      "url": "http://localhost:8080/mcp"
-    }
-  }
-}</code></pre>
+              <p class="small text-secondary mb-2">Add to Claude Desktop / Cursor / OpenCode config:</p>
+              <pre class="bg-dark p-2 rounded small text-secondary mb-0"><code>{"mcpServers":{"tardis":{"url":"http://localhost:8080/mcp"}}}</code></pre>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- APPROVALS TAB -->
+      <!-- ============ SETTINGS TAB ============ -->
+      <div class="tab-pane fade" id="tab-settings">
+        <div class="row">
+          <div class="col-lg-6">
+            <div class="card p-4">
+              <h5 class="text-white mb-4"><i class="bi bi-braces text-primary me-2"></i>Brain / LLM Configuration</h5>
+
+              <div class="settings-section">
+                <h6>API Connection</h6>
+                <div class="mb-3">
+                  <label class="form-label">API Base URL</label>
+                  <input type="text" class="form-control" id="s_brain_baseurl" placeholder="https://api.openai.com/v1">
+                  <div class="form-text text-secondary">OpenAI-compatible endpoint (e.g. OpenAI, Together, vLLM, Poolakey, Mimo)</div>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">API Key</label>
+                  <div class="input-group">
+                    <input type="password" class="form-control" id="s_brain_apikey" placeholder="sk-...">
+                    <button class="btn btn-outline-secondary" onclick="togglePassword('s_brain_apikey')"><i class="bi bi-eye"></i></button>
+                  </div>
+                  <div class="form-text text-secondary">Stored locally, never sent to external services</div>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Model</label>
+                  <input type="text" class="form-control" id="s_brain_model" placeholder="gpt-4o">
+                  <div class="form-text text-secondary">Model identifier (e.g. gpt-4o, mimo-v2.5, glm-4, deepseek-coder)</div>
+                </div>
+              </div>
+
+              <div class="settings-section">
+                <h6>Generation Parameters</h6>
+                <div class="row">
+                  <div class="col-6 mb-3">
+                    <label class="form-label">Max Tokens</label>
+                    <input type="number" class="form-control" id="s_brain_maxtokens" value="256">
+                  </div>
+                  <div class="col-6 mb-3">
+                    <label class="form-label">Temperature</label>
+                    <input type="number" class="form-control" id="s_brain_temperature" step="0.1" min="0" max="2" value="0.7">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-lg-6">
+            <div class="card p-4">
+              <h5 class="text-white mb-4"><i class="bi bi-diagram-3 text-primary me-2"></i>MCP Gateway & Tools</h5>
+
+              <div class="settings-section">
+                <h6>Coding Agent</h6>
+                <div class="row">
+                  <div class="col-6 mb-3">
+                    <label class="form-label">Backend</label>
+                    <select class="form-select" id="s_gw_coding_backend">
+                      <option value="opencode">OpenCode</option>
+                      <option value="claude">Claude Code</option>
+                      <option value="bash">Bash / Shell</option>
+                      <option value="builtin">Built-in Runner</option>
+                    </select>
+                  </div>
+                  <div class="col-6 mb-3">
+                    <label class="form-label">Model Override</label>
+                    <input type="text" class="form-control" id="s_gw_coding_model" placeholder="glm-4">
+                    <div class="form-text text-secondary">Passed to backend as OPENCODE_MODEL or --model flag</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-section">
+                <h6>Research Agent</h6>
+                <div class="mb-3">
+                  <label class="form-label">Research Backend</label>
+                  <select class="form-select" id="s_gw_research_backend">
+                    <option value="builtin">Built-in (grep + codebase)</option>
+                    <option value="web">Web search + codebase</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="settings-section">
+                <h6>Security & Policy</h6>
+                <div class="mb-3">
+                  <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="s_gw_allow_dangerous">
+                    <label class="form-check-label text-secondary" for="s_gw_allow_dangerous">Allow dangerous operations without approval</label>
+                  </div>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Tools requiring human approval (comma-separated)</label>
+                  <input type="text" class="form-control" id="s_gw_approval" placeholder="telephony_make_call, system_run_command">
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Denied tools (comma-separated)</label>
+                  <input type="text" class="form-control" id="s_gw_denied" placeholder="banned_tool1, banned_tool2">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row mt-3">
+          <div class="col-lg-6">
+            <div class="card p-4">
+              <h5 class="text-white mb-4"><i class="bi bi-telephone text-primary me-2"></i>Telephony / SIP</h5>
+              <div class="settings-section">
+                <h6>SIP Server</h6>
+                <div class="row">
+                  <div class="col-8 mb-3">
+                    <label class="form-label">SIP Host</label>
+                    <input type="text" class="form-control" id="s_sip_host" placeholder="voice.navaphone.com">
+                  </div>
+                  <div class="col-4 mb-3">
+                    <label class="form-label">Port</label>
+                    <input type="number" class="form-control" id="s_sip_port" value="5060">
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="col-6 mb-3">
+                    <label class="form-label">Username</label>
+                    <input type="text" class="form-control" id="s_sip_username" placeholder="SIP username">
+                  </div>
+                  <div class="col-6 mb-3">
+                    <label class="form-label">Password</label>
+                    <input type="password" class="form-control" id="s_sip_password" placeholder="SIP password">
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="col-6 mb-3">
+                    <label class="form-label">Caller ID (From Number)</label>
+                    <input type="text" class="form-control" id="s_sip_from" placeholder="982187210128">
+                  </div>
+                  <div class="col-6 mb-3">
+                    <label class="form-label">Transport</label>
+                    <select class="form-select" id="s_sip_transport">
+                      <option value="udp">UDP</option>
+                      <option value="tcp">TCP</option>
+                      <option value="tls">TLS</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-lg-6">
+            <div class="card p-4">
+              <h5 class="text-white mb-4"><i class="bi bi-volume-up text-primary me-2"></i>Text-to-Speech</h5>
+              <div class="settings-section">
+                <h6>Voice Engine</h6>
+                <div class="mb-3">
+                  <label class="form-label">Voice</label>
+                  <input type="text" class="form-control" id="s_tts_voice" placeholder="en-US-GuyNeural">
+                  <div class="form-text text-secondary">Edge TTS voice name (e.g. en-US-GuyNeural, fa-IR-DilaraNeural)</div>
+                </div>
+                <div class="row">
+                  <div class="col-6 mb-3">
+                    <label class="form-label">Rate</label>
+                    <input type="text" class="form-control" id="s_tts_rate" placeholder="+0%">
+                  </div>
+                  <div class="col-6 mb-3">
+                    <label class="form-label">Volume</label>
+                    <input type="text" class="form-control" id="s_tts_volume" placeholder="+0%">
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-4 d-flex gap-2">
+                <button class="btn btn-primary" onclick="saveSettings()"><i class="bi bi-save me-1"></i>Save All Settings</button>
+                <button class="btn btn-outline-secondary" onclick="loadSettings()"><i class="bi bi-arrow-counterclockwise me-1"></i>Reload</button>
+                <span id="settingsSaveStatus" class="align-self-center small text-secondary"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ APPROVALS TAB ============ -->
       <div class="tab-pane fade" id="tab-approvals">
         <div class="card p-3">
           <div class="d-flex justify-content-between align-items-center mb-3">
@@ -150,59 +279,35 @@
           </div>
           <div class="table-responsive">
             <table class="table table-dark table-hover align-middle">
-              <thead>
-                <tr>
-                  <th>Agent</th>
-                  <th>Tool</th>
-                  <th>Arguments</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="approvalsList">
-                <tr><td colspan="6" class="text-center text-secondary">Loading approvals...</td></tr>
-              </tbody>
+              <thead><tr><th>Agent</th><th>Tool</th><th>Arguments</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+              <tbody id="approvalsList"><tr><td colspan="6" class="text-center text-secondary">Loading...</td></tr></tbody>
             </table>
           </div>
         </div>
       </div>
 
-      <!-- TOOLS TAB -->
+      <!-- ============ TOOLS TAB ============ -->
       <div class="tab-pane fade" id="tab-tools">
         <div class="card p-3">
           <div class="d-flex justify-content-between align-items-center mb-3">
             <h5 class="text-white mb-0"><i class="bi bi-tools text-info me-2"></i>Registered MCP Tools</h5>
             <button class="btn btn-sm btn-outline-secondary" onclick="loadTools()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
           </div>
-          <div class="row" id="toolsGrid">
-            <div class="col-12 text-center text-secondary">Loading tools...</div>
-          </div>
+          <div class="row" id="toolsGrid"><div class="col-12 text-center text-secondary">Loading...</div></div>
         </div>
       </div>
 
-      <!-- AUDIT LOGS TAB -->
+      <!-- ============ AUDIT LOGS TAB ============ -->
       <div class="tab-pane fade" id="tab-audit">
         <div class="card p-3">
           <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="text-white mb-0"><i class="bi bi-journal-check text-success me-2"></i>Audit Trail & Compliance</h5>
+            <h5 class="text-white mb-0"><i class="bi bi-journal-check text-success me-2"></i>Audit Trail</h5>
             <button class="btn btn-sm btn-outline-secondary" onclick="loadAuditLogs()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
           </div>
           <div class="table-responsive">
             <table class="table table-dark table-hover small align-middle">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Agent</th>
-                  <th>Tool</th>
-                  <th>Approval</th>
-                  <th>Duration</th>
-                  <th>Sample Output</th>
-                </tr>
-              </thead>
-              <tbody id="auditList">
-                <tr><td colspan="6" class="text-center text-secondary">Loading logs...</td></tr>
-              </tbody>
+              <thead><tr><th>Time</th><th>Agent</th><th>Tool</th><th>Approval</th><th>Duration</th><th>Output</th></tr></thead>
+              <tbody id="auditList"><tr><td colspan="6" class="text-center text-secondary">Loading...</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -210,13 +315,106 @@
     </div>
   </div>
 
+  <!-- Toast for save confirmation -->
+  <div id="settingsToast" class="toast align-items-center text-bg-success border-0" role="alert">
+    <div class="d-flex"><div class="toast-body" id="toastMsg">Settings saved</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
+    // ==================== SETTINGS ====================
+    async function loadSettings() {
+      try {
+        const res = await fetch('/api/settings');
+        const s = await res.json();
+        // Brain
+        document.getElementById('s_brain_baseurl').value = s.brain?.base_url || '';
+        document.getElementById('s_brain_apikey').value = s.brain?.api_key || '';
+        document.getElementById('s_brain_model').value = s.brain?.model || '';
+        document.getElementById('s_brain_maxtokens').value = s.brain?.max_tokens || 256;
+        document.getElementById('s_brain_temperature').value = s.brain?.temperature ?? 0.7;
+        // Gateway
+        document.getElementById('s_gw_coding_backend').value = s.gateway?.coding_backend || 'opencode';
+        document.getElementById('s_gw_coding_model').value = s.gateway?.coding_model || 'glm-4';
+        document.getElementById('s_gw_research_backend').value = s.gateway?.research_backend || 'builtin';
+        document.getElementById('s_gw_allow_dangerous').checked = s.gateway?.allow_dangerous || false;
+        document.getElementById('s_gw_approval').value = (s.gateway?.require_approval || []).join(', ');
+        document.getElementById('s_gw_denied').value = (s.gateway?.denied_tools || []).join(', ');
+        // SIP
+        document.getElementById('s_sip_host').value = s.sip?.host || '';
+        document.getElementById('s_sip_port').value = s.sip?.port || 5060;
+        document.getElementById('s_sip_username').value = s.sip?.username || '';
+        document.getElementById('s_sip_password').value = s.sip?.password || '';
+        document.getElementById('s_sip_from').value = s.sip?.from_number || '';
+        document.getElementById('s_sip_transport').value = s.sip?.transport || 'udp';
+        // TTS
+        document.getElementById('s_tts_voice').value = s.tts?.voice || '';
+        document.getElementById('s_tts_rate').value = s.tts?.rate || '+0%';
+        document.getElementById('s_tts_volume').value = s.tts?.volume || '+0%';
+        // Update status badges
+        document.getElementById('brainStatus').textContent = s.brain?.api_key ? s.brain.model + ' @ ' + (s.brain.base_url || '').replace('https://','').split('/')[0] : 'Not configured (set in Settings)';
+        document.getElementById('codingStatus').textContent = (s.gateway?.coding_backend || 'opencode') + ' / ' + (s.gateway?.coding_model || 'glm-4');
+      } catch(e) { console.error('Failed to load settings:', e); }
+    }
+
+    async function saveSettings() {
+      const commaSplit = (v) => v.split(',').map(s => s.trim()).filter(Boolean);
+      const settings = {
+        brain: {
+          base_url: document.getElementById('s_brain_baseurl').value.trim(),
+          api_key: document.getElementById('s_brain_apikey').value.trim(),
+          model: document.getElementById('s_brain_model').value.trim(),
+          max_tokens: parseInt(document.getElementById('s_brain_maxtokens').value) || 256,
+          temperature: parseFloat(document.getElementById('s_brain_temperature').value) || 0.7,
+        },
+        gateway: {
+          coding_backend: document.getElementById('s_gw_coding_backend').value,
+          coding_model: document.getElementById('s_gw_coding_model').value.trim(),
+          research_backend: document.getElementById('s_gw_research_backend').value,
+          allow_dangerous: document.getElementById('s_gw_allow_dangerous').checked,
+          require_approval: commaSplit(document.getElementById('s_gw_approval').value),
+          denied_tools: commaSplit(document.getElementById('s_gw_denied').value),
+          allowed_tools: [],
+        },
+        sip: {
+          host: document.getElementById('s_sip_host').value.trim(),
+          port: parseInt(document.getElementById('s_sip_port').value) || 5060,
+          username: document.getElementById('s_sip_username').value.trim(),
+          password: document.getElementById('s_sip_password').value,
+          from_number: document.getElementById('s_sip_from').value.trim(),
+          transport: document.getElementById('s_sip_transport').value,
+        },
+        tts: {
+          voice: document.getElementById('s_tts_voice').value.trim(),
+          rate: document.getElementById('s_tts_rate').value.trim(),
+          volume: document.getElementById('s_tts_volume').value.trim(),
+        },
+      };
+      try {
+        const res = await fetch('/api/settings', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(settings) });
+        const data = await res.json();
+        document.getElementById('settingsSaveStatus').textContent = 'Saved at ' + new Date().toLocaleTimeString();
+        showToast(data.message || 'Settings saved');
+        loadSettings();
+      } catch(e) { showToast('Error: ' + e.message); }
+    }
+
+    function togglePassword(id) {
+      const el = document.getElementById(id);
+      el.type = el.type === 'password' ? 'text' : 'password';
+    }
+
+    function showToast(msg) {
+      document.getElementById('toastMsg').textContent = msg;
+      const t = new bootstrap.Toast(document.getElementById('settingsToast'), {delay: 3000});
+      t.show();
+    }
+
+    // ==================== CHAT ====================
     async function sendChat() {
       const input = document.getElementById('queryInput');
       const text = input.value.trim();
       if (!text) return;
-
       const chatBox = document.getElementById('chatBox');
       const userDiv = document.createElement('div');
       userDiv.className = 'msg-user';
@@ -224,33 +422,22 @@
       chatBox.appendChild(userDiv);
       input.value = '';
       chatBox.scrollTop = chatBox.scrollHeight;
-
       const btn = document.getElementById('sendBtn');
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Thinking...';
-
       try {
-        const res = await fetch('/api/agent/chat', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({query: text})
-        });
+        const res = await fetch('/api/agent/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({query:text}) });
         const data = await res.json();
         const agentDiv = document.createElement('div');
         agentDiv.className = 'msg-agent';
-        agentDiv.innerHTML = '<strong>Nimfadora TARDIS:</strong><div>' + (data.answer || data.error || 'No answer').replace(/\n/g, '<br>') + '</div>';
+        agentDiv.innerHTML = '<strong>TARDIS:</strong><div>' + (data.answer || data.error || 'No answer').replace(/\n/g,'<br>') + '</div>';
         chatBox.appendChild(agentDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
-      } catch (e) {
-        alert('Error: ' + e.message);
-      } finally {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-send"></i> Send';
-        loadApprovals();
-        loadAuditLogs();
-      }
+      } catch(e) { alert('Error: '+e.message); }
+      finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-send"></i> Send'; loadApprovals(); loadAuditLogs(); }
     }
 
+    // ==================== APPROVALS ====================
     async function loadApprovals() {
       try {
         const res = await fetch('/api/approvals');
@@ -258,106 +445,61 @@
         const tbody = document.getElementById('approvalsList');
         tbody.innerHTML = '';
         let pendingCount = 0;
-
-        if (!data || data.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary">No approval requests.</td></tr>';
-          document.getElementById('approvalBadge').classList.add('d-none');
-          return;
-        }
-
+        if (!data || data.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary">No approval requests.</td></tr>'; document.getElementById('approvalBadge').classList.add('d-none'); return; }
         data.forEach(item => {
           if (item.status === 'pending') pendingCount++;
           const tr = document.createElement('tr');
           const badgeClass = item.status === 'approved' ? 'badge-approved' : (item.status === 'pending' ? 'badge-pending' : 'badge-rejected');
-          tr.innerHTML = '<td><span class="badge bg-secondary">' + item.agent_id + '</span></td>' +
-            '<td><code>' + item.tool_name + '</code></td>' +
-            '<td><small>' + JSON.stringify(item.arguments) + '</small></td>' +
-            '<td><span class="badge ' + badgeClass + '">' + item.status + '</span></td>' +
-            '<td><small>' + new Date(item.created_at).toLocaleTimeString() + '</small></td>' +
-            '<td>' + (item.status === 'pending' ?
-              '<button class="btn btn-sm btn-success me-1" onclick="resolveApproval(\'' + item.id + '\', true)">Approve</button>' +
-              '<button class="btn btn-sm btn-danger" onclick="resolveApproval(\'' + item.id + '\', false)">Reject</button>' :
-              '<span class="text-secondary small">Resolved</span>') + '</td>';
+          tr.innerHTML = '<td><span class="badge bg-secondary">'+item.agent_id+'</span></td><td><code>'+item.tool_name+'</code></td><td><small>'+JSON.stringify(item.arguments)+'</small></td><td><span class="badge '+badgeClass+'">'+item.status+'</span></td><td><small>'+new Date(item.created_at).toLocaleTimeString()+'</small></td><td>'+(item.status==='pending'?'<button class="btn btn-sm btn-success me-1" onclick="resolveApproval(\''+item.id+'\',true)">Approve</button><button class="btn btn-sm btn-danger" onclick="resolveApproval(\''+item.id+'\',false)">Reject</button>':'<span class="text-secondary small">Resolved</span>')+'</td>';
           tbody.appendChild(tr);
         });
-
         const badge = document.getElementById('approvalBadge');
-        if (pendingCount > 0) {
-          badge.textContent = pendingCount;
-          badge.classList.remove('d-none');
-        } else {
-          badge.classList.add('d-none');
-        }
-      } catch (e) {
-        console.error(e);
-      }
+        if (pendingCount > 0) { badge.textContent = pendingCount; badge.classList.remove('d-none'); } else { badge.classList.add('d-none'); }
+      } catch(e) { console.error(e); }
     }
 
     async function resolveApproval(id, approve) {
-      await fetch('/api/approvals/resolve', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({id, approve, user: 'web-operator'})
-      });
-      loadApprovals();
-      loadAuditLogs();
+      await fetch('/api/approvals/resolve', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id,approve,user:'web-operator'}) });
+      loadApprovals(); loadAuditLogs();
     }
 
+    // ==================== TOOLS ====================
     async function loadTools() {
       try {
         const res = await fetch('/api/tools');
         const data = await res.json();
         const grid = document.getElementById('toolsGrid');
         grid.innerHTML = '';
-
-        data.tools.forEach(t => {
+        (data.tools||[]).forEach(t => {
           const col = document.createElement('div');
           col.className = 'col-md-6 mb-3';
-          col.innerHTML = '<div class="card p-3 h-100">' +
-            '<h6 class="text-white"><i class="bi bi-gear-wide-connected text-primary me-2"></i>' + t.name + '</h6>' +
-            '<p class="small text-secondary mb-2">' + t.description + '</p>' +
-            '<pre class="bg-dark p-2 rounded small text-info mb-0"><code>' + JSON.stringify(t.inputSchema, null, 2) + '</code></pre>' +
-            '</div>';
+          col.innerHTML = '<div class="card p-3 h-100"><h6 class="text-white"><i class="bi bi-gear-wide-connected text-primary me-2"></i>'+t.name+'</h6><p class="small text-secondary mb-2">'+t.description+'</p><pre class="bg-dark p-2 rounded small text-info mb-0"><code>'+JSON.stringify(t.inputSchema,null,2)+'</code></pre></div>';
           grid.appendChild(col);
         });
-      } catch (e) {
-        console.error(e);
-      }
+      } catch(e) { console.error(e); }
     }
 
+    // ==================== AUDIT ====================
     async function loadAuditLogs() {
       try {
         const res = await fetch('/api/audit');
         const data = await res.json();
         const tbody = document.getElementById('auditList');
         tbody.innerHTML = '';
-
-        if (!data || data.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary">No audit logs yet.</td></tr>';
-          return;
-        }
-
+        if (!data || data.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary">No logs yet.</td></tr>'; return; }
         data.slice().reverse().forEach(log => {
           const tr = document.createElement('tr');
-          tr.innerHTML = '<td><small>' + new Date(log.timestamp).toLocaleTimeString() + '</small></td>' +
-            '<td><span class="badge bg-secondary">' + log.agent_id + '</span></td>' +
-            '<td><code>' + log.tool_name + '</code></td>' +
-            '<td>' + (log.approved ? '<span class="text-success"><i class="bi bi-check-circle"></i> ' + (log.approved_by || 'auto') + '</span>' : '<span class="text-danger"><i class="bi bi-x-circle"></i> Denied</span>') + '</td>' +
-            '<td>' + log.duration_ms + 'ms</td>' +
-            '<td><small class="text-secondary">' + (log.output_sample || '-') + '</small></td>';
+          tr.innerHTML = '<td><small>'+new Date(log.timestamp).toLocaleTimeString()+'</small></td><td><span class="badge bg-secondary">'+log.agent_id+'</span></td><td><code>'+log.tool_name+'</code></td><td>'+(log.approved?'<span class="text-success"><i class="bi bi-check-circle"></i> '+(log.approved_by||'auto')+'</span>':'<span class="text-danger"><i class="bi bi-x-circle"></i> Denied</span>')+'</td><td>'+log.duration_ms+'ms</td><td><small class="text-secondary">'+(log.output_sample||'-')+'</small></td>';
           tbody.appendChild(tr);
         });
-      } catch (e) {
-        console.error(e);
-      }
+      } catch(e) { console.error(e); }
     }
 
-    // Auto-refresh tabs
-    setInterval(() => {
-      loadApprovals();
-      loadAuditLogs();
-    }, 4000);
+    // Auto-refresh
+    setInterval(() => { loadApprovals(); loadAuditLogs(); }, 5000);
 
+    // Initial load
+    loadSettings();
     loadTools();
     loadApprovals();
     loadAuditLogs();
