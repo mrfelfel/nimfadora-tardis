@@ -1,0 +1,9 @@
+tardis
+nimfadora
+*.exe
+tmp/
+.git
+.claude/
+*.mp3
+*.wav
+*.pcm

@@ -2,6 +2,10 @@
 
 **Autonomous AI Agent & Enterprise MCP Gateway / Control Plane**
 
+[![Vercel Deployment](https://img.shields.io/badge/Vercel-Live%20Demo-black?logo=vercel)](https://nimfadora-tardis.vercel.app)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/mrfelfel/nimfadora-tardis)
+[![Protocol](https://img.shields.io/badge/MCP-2026--07--28-purple)](https://modelcontextprotocol.io)
+
 Nimfadora TARDIS is an autonomous orchestrator and Model Context Protocol (MCP) Gateway built with Go. It serves as both a multi-agent decision engine and a unified control plane for AI agents (Claude Code, OpenCode, Cursor, and custom clients).
 
 ---
