@@ -50,6 +50,8 @@ type GatewayConfig struct {
 	DeniedTools     []string `yaml:"denied_tools"`
 	CodingBackend   string   `yaml:"coding_backend"`
 	CodingModel     string   `yaml:"coding_model"`
+	APIBaseURL      string   `yaml:"api_base_url"`
+	APIKey          string   `yaml:"api_key"`
 }
 
 func Load(path string) (*Config, error) {

@@ -14,8 +14,37 @@ import (
 	"github.com/nimfadora/tardis/internal/call"
 )
 
+// codingEnv builds the environment for spawning coding agents with the user's API settings.
+func codingEnv(apiBaseURL, apiKey, model string) []string {
+	env := os.Environ()
+
+	// Claude Code env vars -- bypasses OAuth, uses user's API key + proxy
+	if apiKey != "" {
+		env = append(env, "ANTHROPIC_API_KEY="+apiKey)
+	}
+	if apiBaseURL != "" {
+		env = append(env, "ANTHROPIC_BASE_URL="+apiBaseURL)
+	}
+	if model != "" {
+		env = append(env, "ANTHROPIC_MODEL="+model)
+	}
+
+	// OpenCode / OpenAI-compatible env vars
+	if apiKey != "" {
+		env = append(env, "OPENAI_API_KEY="+apiKey)
+	}
+	if apiBaseURL != "" {
+		env = append(env, "OPENAI_BASE_URL="+apiBaseURL)
+	}
+	if model != "" {
+		env = append(env, "OPENAI_MODEL="+model)
+	}
+
+	return env
+}
+
 // RegisterDefaultTools wires standard TARDIS agent tools into the MCP gateway
-func RegisterDefaultTools(g *Gateway, callHandler *call.Handler, defaultBackend, defaultModel string) {
+func RegisterDefaultTools(g *Gateway, callHandler *call.Handler, defaultBackend, defaultModel string, apiBaseURL, apiKey string) {
 	// 1. Coding Agent (OpenCode / Claude Code / Shell executor)
 	g.RegisterTool(Tool{
 		Name:        "coding_agent",
@@ -24,7 +53,7 @@ func RegisterDefaultTools(g *Gateway, callHandler *call.Handler, defaultBackend,
 			"type": "object",
 			"properties": {
 				"task": {"type": "string", "description": "The exact coding or refactoring task to accomplish"},
-				"model": {"type": "string", "description": "The model to use, e.g. glm-4, claude-3-5-sonnet, deepseek-coder"},
+				"model": {"type": "string", "description": "The model to use, e.g. mimo-v2.5, glm-4, deepseek-coder"},
 				"backend": {"type": "string", "description": "Backend tool: opencode, claude, or bash", "enum": ["opencode", "claude", "bash"]}
 			},
 			"required": ["task"]
@@ -44,25 +73,33 @@ func RegisterDefaultTools(g *Gateway, callHandler *call.Handler, defaultBackend,
 			model = defaultModel
 		}
 
-		log.Printf("[tools:coding_agent] running task via backend=%s model=%s: %s", backend, model, task)
+		// Read live API config from gateway (supports hot-reload)
+		apiURL, apiK := g.GetAPIConfig()
+
+		log.Printf("[tools:coding_agent] backend=%s model=%s api=%s task=%s", backend, model, apiURL, task)
+
+		env := codingEnv(apiURL, apiK, model)
 
 		var cmd *exec.Cmd
 		switch backend {
-		case "opencode":
-			// If opencode binary exists, run: opencode run "<task>"
-			// If model flag is supported or passed via env
-			cmd = exec.CommandContext(ctx, "opencode", "run", task)
-			if model != "" {
-				cmd.Env = append(os.Environ(), "OPENCODE_MODEL="+model)
-			}
 		case "claude":
-			// If claude binary exists, run: claude -p "<task>"
-			cmd = exec.CommandContext(ctx, "claude", "-p", task)
-			if model != "" {
-				cmd.Args = append(cmd.Args, "--model", model)
-			}
+			// Claude Code CLI: uses ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL from env
+			// No OAuth login needed when these are set
+			cmd = exec.CommandContext(ctx, "claude", "-p", "--verbose",
+				"--output-format", "text",
+				"--model", model,
+				"--bare",
+				task)
+			cmd.Env = env
+			cmd.Dir = "."
+
+		case "opencode":
+			// OpenCode CLI: uses OPENAI_API_KEY + OPENAI_BASE_URL from env
+			cmd = exec.CommandContext(ctx, "opencode", "run", task)
+			cmd.Env = env
+
 		default:
-			// Fallback: bash execution
+			// Fallback: bash execution (no AI, just shell)
 			cmd = exec.CommandContext(ctx, "bash", "-c", task)
 		}
 

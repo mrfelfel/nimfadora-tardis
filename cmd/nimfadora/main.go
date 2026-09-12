@@ -97,11 +97,11 @@ func main() {
 		CodingModel:     settings.Get().Gateway.CodingModel,
 	}
 	gateway := mcpgate.New(gwCfg)
-	mcpgate.RegisterDefaultTools(gateway, callHandler, gwCfg.CodingBackend, gwCfg.CodingModel)
+	s := settings.Get()
+	mcpgate.RegisterDefaultTools(gateway, callHandler, gwCfg.CodingBackend, gwCfg.CodingModel, s.Brain.BaseURL, s.Brain.APIKey)
 
 	// 5. Brain & Autonomous Agent
 	var brainClient *brain.Mimo
-	s := settings.Get()
 	if s.Brain.APIKey != "" {
 		bc := config.BrainConfig{
 			APIKey:      s.Brain.APIKey,

@@ -110,7 +110,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
-		// Apply gateway policy changes immediately
+		// Apply gateway policy changes immediately (including API credentials for coding agents)
 		gwCfg := config.GatewayConfig{
 			AllowDangerous:  incoming.Gateway.AllowDangerous,
 			RequireApproval: incoming.Gateway.RequireApproval,
@@ -118,6 +118,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			DeniedTools:     incoming.Gateway.DeniedTools,
 			CodingBackend:   incoming.Gateway.CodingBackend,
 			CodingModel:     incoming.Gateway.CodingModel,
+			APIBaseURL:      incoming.Brain.BaseURL,
+			APIKey:          incoming.Brain.APIKey,
 		}
 		s.gateway.SetConfig(gwCfg)
 		w.Header().Set("Content-Type", "application/json")

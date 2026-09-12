@@ -43,7 +43,14 @@ func (g *Gateway) SetConfig(cfg config.GatewayConfig) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.cfg = cfg
-	log.Printf("[mcpgate] configuration updated: coding_backend=%s coding_model=%s allow_dangerous=%v", cfg.CodingBackend, cfg.CodingModel, cfg.AllowDangerous)
+	log.Printf("[mcpgate] config updated: backend=%s model=%s api=%s dangerous=%v", cfg.CodingBackend, cfg.CodingModel, cfg.APIBaseURL, cfg.AllowDangerous)
+}
+
+// GetAPIConfig returns the current API base URL and key (for tool env injection)
+func (g *Gateway) GetAPIConfig() (baseURL, apiKey string) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.cfg.APIBaseURL, g.cfg.APIKey
 }
 
 // RegisterTool adds a tool with its handler and MCP schema
