@@ -68,7 +68,7 @@
               <h6 class="text-white"><i class="bi bi-cpu me-2"></i>Capabilities</h6>
               <ul class="list-unstyled mb-0 small">
                 <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i>Fast LLM routing (Mimo/GLM/etc)</li>
-                <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i>Code agent (OpenCode / Claude)</li>
+                <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i>Code agent (OpenCode)</li>
                 <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i>Multi-agent research</li>
                 <li class="mb-2"><i class="bi bi-check-circle text-success me-2"></i>SIP voice alerts</li>
                 <li><i class="bi bi-shield-lock text-warning me-2"></i>Governance & approval</li>
@@ -173,13 +173,12 @@
                   <label class="form-label">Coding Backend</label>
                   <select class="form-select" id="s_coding_backend">
                     <option value="opencode">OpenCode</option>
-                    <option value="claude">Claude Code</option>
                     <option value="bash">Bash (fallback)</option>
                   </select>
                 </div>
                 <div class="col-6">
                   <label class="form-label">Coding Model</label>
-                  <input type="text" class="form-control" id="s_coding_model" placeholder="glm-4 / claude-3-5-sonnet">
+                  <input type="text" class="form-control" id="s_coding_model" placeholder="mimo-v2.5 / glm-4 / deepseek-coder">
                 </div>
               </div>
               <div class="row mb-2">

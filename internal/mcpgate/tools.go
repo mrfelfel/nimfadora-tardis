@@ -18,20 +18,6 @@ import (
 func codingEnv(apiBaseURL, apiKey, model string) []string {
 	env := os.Environ()
 
-	// Claude Code env vars -- bypasses OAuth, uses user's API key + proxy
-	if apiKey != "" {
-		env = append(env, "ANTHROPIC_API_KEY="+apiKey)
-	}
-	if apiBaseURL != "" {
-		env = append(env, "ANTHROPIC_BASE_URL="+apiBaseURL)
-	}
-	if model != "" {
-		env = append(env, "ANTHROPIC_MODEL="+model)
-	}
-	// Allow non-Anthropic models through Claude Code's strict catalog check
-	env = append(env, "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1")
-
-	// OpenCode / OpenAI-compatible env vars
 	if apiKey != "" {
 		env = append(env, "OPENAI_API_KEY="+apiKey)
 	}
@@ -47,16 +33,16 @@ func codingEnv(apiBaseURL, apiKey, model string) []string {
 
 // RegisterDefaultTools wires standard TARDIS agent tools into the MCP gateway
 func RegisterDefaultTools(g *Gateway, callHandler *call.Handler, defaultBackend, defaultModel string, apiBaseURL, apiKey string) {
-	// 1. Coding Agent (OpenCode / Claude Code / Shell executor)
+	// 1. Coding Agent (OpenCode / Shell executor)
 	g.RegisterTool(Tool{
 		Name:        "coding_agent",
-		Description: "Delegate a programming, debugging, refactoring, or implementation task to an AI coding agent (OpenCode, Claude, etc.) with specified model.",
+		Description: "Delegate a programming, debugging, refactoring, or implementation task to an AI coding agent (OpenCode) with a specified model.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"task": {"type": "string", "description": "The exact coding or refactoring task to accomplish"},
 				"model": {"type": "string", "description": "The model to use, e.g. mimo-v2.5, glm-4, deepseek-coder"},
-				"backend": {"type": "string", "description": "Backend tool: opencode, claude, or bash", "enum": ["opencode", "claude", "bash"]}
+				"backend": {"type": "string", "description": "Backend tool: opencode or bash", "enum": ["opencode", "bash"]}
 			},
 			"required": ["task"]
 		}`),
@@ -84,24 +70,11 @@ func RegisterDefaultTools(g *Gateway, callHandler *call.Handler, defaultBackend,
 
 		var cmd *exec.Cmd
 		switch backend {
-		case "claude":
-			// Claude Code CLI: uses ANTHROPIC_API_KEY + ANTHROPIC_BASE_URL from env
-			// No OAuth login needed when these are set
-			cmd = exec.CommandContext(ctx, "claude", "-p", "--verbose",
-				"--output-format", "text",
-				"--model", model,
-				"--bare",
-				task)
-			cmd.Env = env
-			cmd.Dir = "."
-
 		case "opencode":
-			// OpenCode CLI: uses OPENAI_API_KEY + OPENAI_BASE_URL from env
 			cmd = exec.CommandContext(ctx, "opencode", "run", task)
 			cmd.Env = env
 
 		default:
-			// Fallback: bash execution (no AI, just shell)
 			cmd = exec.CommandContext(ctx, "bash", "-c", task)
 		}
 
@@ -151,11 +124,9 @@ func RegisterDefaultTools(g *Gateway, callHandler *call.Handler, defaultBackend,
 
 		log.Printf("[tools:research_agent] researching query='%s' scope='%s'", query, scope)
 
-		// Search local files / codebase or web
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("### Research Report for: %s (Scope: %s)\n\n", query, scope))
 
-		// Check if grep/find or gh search is needed
 		cmd := exec.CommandContext(ctx, "grep", "-rnI", "--exclude-dir=.git", "--exclude-dir=tmp", query, ".")
 		out, _ := cmd.CombinedOutput()
 		if len(out) > 0 {
@@ -184,7 +155,7 @@ func RegisterDefaultTools(g *Gateway, callHandler *call.Handler, defaultBackend,
 			"type": "object",
 			"properties": {
 				"target": {"type": "string", "description": "Destination phone number (E.164 or operator format, e.g. 0912...)"},
-				"message": {"type": "string", "description": "Spoken notification message in Persian or English"}
+				"message": {"type": "string", "description": "Spoken notification message"}
 			},
 			"required": ["target", "message"]
 		}`),
@@ -201,11 +172,10 @@ func RegisterDefaultTools(g *Gateway, callHandler *call.Handler, defaultBackend,
 			}, nil
 		}
 
-		// Fire async or synchronous call
 		go func() {
 			callCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			from := "" // handler picks default configured caller ID
+			from := ""
 			err := callHandler.Notify(callCtx, target, from, message)
 			if err != nil {
 				log.Printf("[tools:telephony_make_call] call error: %v", err)
