@@ -28,6 +28,8 @@ func codingEnv(apiBaseURL, apiKey, model string) []string {
 	if model != "" {
 		env = append(env, "ANTHROPIC_MODEL="+model)
 	}
+	// Allow non-Anthropic models through Claude Code's strict catalog check
+	env = append(env, "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1")
 
 	// OpenCode / OpenAI-compatible env vars
 	if apiKey != "" {
